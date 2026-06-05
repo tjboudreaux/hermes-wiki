@@ -64,6 +64,7 @@ class _PageProjection:
     author: str | None
     author_kind: str | None
     sha256: str
+    inbound_links: int
     snippet: str | None
     body_text: str
 
@@ -296,6 +297,7 @@ def _build_tmp_projection(
     with db.connect_wiki(tmp_db_path) as conn:
         db.initialize_wiki(conn)
         _copy_projection_versions(conn, wiki_root / "wiki.db", previous_version_id)
+        _copy_support_tables(conn, wiki_root / "wiki.db")
         for page_file in _iter_page_files(wiki_root):
             page = _page_projection_from_file(wiki_root, page_file)
             expected_pages.append(page)
@@ -314,12 +316,83 @@ def _build_tmp_projection(
                 author=page.author,
                 author_kind=page.author_kind,
                 sha256=page.sha256,
+                inbound_links=page.inbound_links,
                 snippet=page.snippet,
                 body_text=page.body_text,
             )
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     return expected_pages
+
+
+def _copy_support_tables(target: sqlite3.Connection, old_db_path: Path) -> None:
+    """Preserve non-page projection rows across page/file rebuilds when possible."""
+
+    if not old_db_path.exists():
+        return
+    try:
+        with db.connect_wiki(old_db_path) as old:
+            for row in old.execute("SELECT * FROM sources ORDER BY id"):
+                db.upsert_source(
+                    target,
+                    id=str(row["id"]),
+                    ingested_at=row["ingested_at"],
+                    sha256=row["sha256"],
+                    source_url=row["source_url"],
+                    source_path=row["source_path"],
+                    version=int(row["version"] or 1),
+                    previous_source_id=row["previous_source_id"],
+                    is_latest=int(row["is_latest"] or 0),
+                    classified_as=row["classified_as"],
+                )
+            for row in old.execute("SELECT * FROM ingest_log ORDER BY id"):
+                target.execute(
+                    """
+                    INSERT OR REPLACE INTO ingest_log (
+                        id, ingested_at, source_type, source_url, source_path, sha256,
+                        pages_created, pages_updated, drift_detected, author, author_kind
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["id"],
+                        row["ingested_at"],
+                        row["source_type"],
+                        row["source_url"],
+                        row["source_path"],
+                        row["sha256"],
+                        row["pages_created"],
+                        row["pages_updated"],
+                        row["drift_detected"],
+                        row["author"],
+                        row["author_kind"],
+                    ),
+                )
+            for row in old.execute("SELECT * FROM trusted_plugins ORDER BY kind, name"):
+                db.upsert_trusted_plugin(
+                    target,
+                    name=str(row["name"]),
+                    kind=str(row["kind"]),
+                    path=str(row["path"]),
+                    sha256=str(row["sha256"]),
+                    trusted_at=str(row["trusted_at"]),
+                    author=row["author"],
+                    author_kind=row["author_kind"],
+                )
+            for row in old.execute("SELECT * FROM taxonomy ORDER BY tag"):
+                db.add_taxonomy_tag(target, tag=str(row["tag"]), created=row["created"])
+            for row in old.execute(
+                "SELECT * FROM kanban_refs ORDER BY page_id, task_id, direction"
+            ):
+                db.upsert_kanban_ref(
+                    target,
+                    page_id=str(row["page_id"]),
+                    task_id=str(row["task_id"]),
+                    direction=str(row["direction"]),
+                    created=row["created"],
+                )
+    except sqlite3.DatabaseError:
+        return
 
 
 def _validate_tmp_projection(tmp_db_path: Path, expected_pages: list[_PageProjection]) -> None:
@@ -352,6 +425,7 @@ def _validate_page_row(page: _PageProjection, row: dict[str, Any]) -> None:
         "created": page.created,
         "updated": page.updated,
         "sha256": page.sha256,
+        "inbound_links": page.inbound_links,
         "body_text": page.body_text,
     }
     for key, expected_value in checks.items():
@@ -388,6 +462,7 @@ def _page_projection_from_file(wiki_root: Path, path: Path) -> _PageProjection:
         author=_optional_text(metadata.get("author")),
         author_kind=_optional_text(metadata.get("author_kind")),
         sha256=sha256_file(path),
+        inbound_links=_integer(metadata.get("inbound_links"), default=0),
         snippet=_snippet(body),
         body_text=body,
     )
@@ -429,6 +504,15 @@ def _optional_text(value: Any) -> str | None:
     if isinstance(value, (list, dict)):
         return json.dumps(value, separators=(",", ":"), sort_keys=True)
     return str(value)
+
+
+def _integer(value: Any, *, default: int) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ProjectionValidationError(f"frontmatter integer field is invalid: {value!r}") from exc
 
 
 def _string_list(value: Any, *, field: str, path: Path) -> list[str]:

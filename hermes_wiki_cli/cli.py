@@ -17,6 +17,7 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
+from hermes_wiki.pipeline import IngestError, ingest_source, list_inbox, search_wiki
 
 
 def build_parser(
@@ -94,6 +95,88 @@ def wiki_command(args: argparse.Namespace) -> int:
             report = lint_wiki(slug=args.wiki, profile=args.profile, author=args.author)
             print(report.to_json())
             return 1 if report.status == "failed" else 0
+        if verb == "ingest":
+            if args.inbox:
+                rows = list_inbox(wiki=args.wiki)
+                if not rows:
+                    print("Inbox empty.")
+                    return 0
+                failures = 0
+                for row in rows:
+                    try:
+                        result = ingest_source(row["path"], wiki=args.wiki, author=args.author)
+                    except IngestError as exc:
+                        failures += 1
+                        print(f"failed {row['name']}: {exc}", file=sys.stderr)
+                        continue
+                    print(
+                        f"Ingested {row['name']} class={result.classified_as} "
+                        f"source={result.source_id}"
+                    )
+                return 1 if failures else 0
+            if not args.source:
+                print("ingest requires <path|url> or explicit --inbox", file=sys.stderr)
+                return 1
+            result = ingest_source(args.source, wiki=args.wiki, author=args.author)
+            if result.skipped:
+                print(f"no change: {result.source_id}")
+                return 0
+            print(
+                f"Ingested {args.source} class={result.classified_as} "
+                f"source={result.source_id}"
+            )
+            print("pages_created: " + ", ".join(result.pages_created))
+            if result.pages_updated:
+                print("pages_updated: " + ", ".join(result.pages_updated))
+            return 0
+        if verb == "search":
+            rows = search_wiki(args.query, wiki=args.wiki, limit=args.limit)
+            if not rows:
+                print("No results.")
+                return 0
+            for row in rows:
+                print(f"{row['id']}: {row['title']} — {row.get('snippet') or ''}")
+            return 0
+        if verb == "inbox":
+            rows = list_inbox(wiki=args.wiki)
+            if not rows:
+                print("Inbox empty.")
+                return 0
+            for row in rows:
+                print(f"{row['name']}: {row['status']} ({row['path']})")
+            return 0
+        if verb == "plugins":
+            from hermes_wiki.trust import TrustError, list_plugins, trust_plugin
+
+            try:
+                if args.plugins_command == "list":
+                    rows = list_plugins(wiki=args.wiki)
+                    if not rows:
+                        print("No custom plugins.")
+                        return 0
+                    for row in rows:
+                        print(
+                            f"{row['kind']} {row['name']}: {row['status']} "
+                            f"sha256={row.get('sha256') or ''}"
+                        )
+                    return 0
+                if args.plugins_command == "trust":
+                    result = trust_plugin(
+                        kind=args.kind,
+                        name=args.name,
+                        wiki=args.wiki,
+                        author=args.author,
+                    )
+                    print(
+                        f"Trusted {result['kind']} {result['name']} "
+                        f"sha256={result['sha256']}"
+                    )
+                    return 0
+            except TrustError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            print("plugins requires a subcommand", file=sys.stderr)
+            return 1
         if verb == "purge":
             print(
                 "wiki purge is not available in this phase; archive is reversible "
@@ -101,7 +184,7 @@ def wiki_command(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-    except WikiManagementError as exc:
+    except (WikiManagementError, IngestError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     raise AssertionError(f"unhandled wiki command: {verb}")
@@ -179,6 +262,30 @@ def _add_management_subcommands(
     lint.add_argument("--wiki", dest="wiki", help="Explicit wiki slug (overrides current)")
     lint.add_argument("--profile", help="Profile for current-wiki resolution")
     lint.add_argument("--author", help="Override the acting author for attribution")
+
+    ingest = subparsers.add_parser("ingest", help="Ingest one source into a Wiki")
+    ingest.add_argument("source", nargs="?", help="Local path or http(s) URL")
+    ingest.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    ingest.add_argument("--author", help="Override the acting author for attribution")
+    ingest.add_argument("--inbox", action="store_true", help="Explicitly batch the inbox")
+
+    search = subparsers.add_parser("search", help="Search Wiki Pages")
+    search.add_argument("query", help="FTS query")
+    search.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    search.add_argument("--limit", type=int, default=5)
+
+    inbox = subparsers.add_parser("inbox", help="List unprocessed inbox files")
+    inbox.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+
+    plugins = subparsers.add_parser("plugins", help="List and trust custom plugins")
+    plugin_subparsers = plugins.add_subparsers(dest="plugins_command")
+    plugin_list = plugin_subparsers.add_parser("list", help="List custom plugins")
+    plugin_list.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    plugin_trust = plugin_subparsers.add_parser("trust", help="Trust a custom plugin file")
+    plugin_trust.add_argument("kind", choices=("classifier", "processor"))
+    plugin_trust.add_argument("name")
+    plugin_trust.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    plugin_trust.add_argument("--author", help="Override the acting author for attribution")
 
     purge = subparsers.add_parser("purge", help="Future destructive removal command")
     purge.add_argument("slug", help="Wiki slug that would be purged in a future phase")
