@@ -17,7 +17,7 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
-from hermes_wiki.pipeline import IngestError, ingest_source, list_inbox, search_wiki
+from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox, search_wiki
 
 
 def build_parser(
@@ -96,24 +96,27 @@ def wiki_command(args: argparse.Namespace) -> int:
             print(report.to_json())
             return 1 if report.status == "failed" else 0
         if verb == "ingest":
+            if args.inbox and args.source:
+                print("ingest accepts either <path|url> or --inbox, not both", file=sys.stderr)
+                return 1
             if args.inbox:
-                rows = list_inbox(wiki=args.wiki)
-                if not rows:
+                results = ingest_inbox(wiki=args.wiki, author=args.author)
+                if not results:
                     print("Inbox empty.")
                     return 0
-                failures = 0
-                for row in rows:
-                    try:
-                        result = ingest_source(row["path"], wiki=args.wiki, author=args.author)
-                    except IngestError as exc:
-                        failures += 1
-                        print(f"failed {row['name']}: {exc}", file=sys.stderr)
+                for result in results:
+                    name = result.message or result.source_id.rsplit("/", 1)[-1]
+                    if result.skipped and result.classified_as == "oversized":
+                        print(f"Skipped {name} status=oversized")
+                        continue
+                    if result.skipped and result.classified_as == "unknown":
+                        print(f"Retained {name} class=unknown")
                         continue
                     print(
-                        f"Ingested {row['name']} class={result.classified_as} "
+                        f"Ingested {name} class={result.classified_as} "
                         f"source={result.source_id}"
                     )
-                return 1 if failures else 0
+                return 0
             if not args.source:
                 print("ingest requires <path|url> or explicit --inbox", file=sys.stderr)
                 return 1

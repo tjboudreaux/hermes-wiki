@@ -9,7 +9,7 @@ import re
 import urllib.error
 import urllib.request
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -33,6 +33,7 @@ RAW_SUBDIRS = {
     "transcript": "transcripts",
     "unknown": "unknown",
 }
+INBOX_STATUS_REL = Path("raw/inbox_status.json")
 
 
 class IngestError(RuntimeError):
@@ -156,13 +157,103 @@ def ingest_source(
 
     acting_author = resolved_author(author)
     source = _read_source(source_ref)
+    wiki_root = resolved.path
     if len(source.content) > MAX_INGEST_BYTES:
+        _record_direct_inbox_status_if_applicable(
+            wiki_root,
+            source=source,
+            status="oversized",
+            classified_as="oversized",
+            author=acting_author,
+        )
         raise IngestError("oversized source exceeds the 50MB Phase 1 ingest cap")
-    label = classify_source(source.name, source.content, wiki_root=resolved.path)
+    return _ingest_source_content(
+        source_ref,
+        source=source,
+        wiki_slug=resolved.slug,
+        wiki_root=wiki_root,
+        author=acting_author,
+        processor=processor,
+        remove_source_path=None,
+    )
+
+
+def ingest_inbox(
+    *,
+    wiki: str | None = None,
+    author: str | None = None,
+    processor: Processor | None = None,
+) -> list[IngestResult]:
+    """Explicitly process the pending inbox for one Wiki.
+
+    This is intentionally separate from ``ingest_source`` so a missing path can
+    never be interpreted as batch inbox intent.
+    """
+
+    try:
+        resolved = ensure_wiki_mutable(slug=wiki)
+    except WikiManagementError as exc:
+        raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+    acting_author = resolved_author(author)
+    inbox = resolved.path / "raw" / "inbox"
+    if not inbox.exists():
+        return []
+
+    results: list[IngestResult] = []
+    for inbox_path in sorted(item for item in inbox.iterdir() if item.is_file()):
+        source = _read_source(str(inbox_path))
+        if len(source.content) > MAX_INGEST_BYTES:
+            result = _record_inbox_attempt(
+                resolved.path,
+                inbox_path=inbox_path,
+                status="oversized",
+                classified_as="oversized",
+                author=acting_author,
+            )
+            results.append(result)
+            continue
+        label = classify_source(source.name, source.content, wiki_root=resolved.path)
+        if label.name == "unknown":
+            result = _record_inbox_attempt(
+                resolved.path,
+                inbox_path=inbox_path,
+                status="unknown",
+                classified_as=label.name,
+                author=acting_author,
+            )
+            results.append(result)
+            continue
+        result = _ingest_source_content(
+            str(inbox_path),
+            source=source,
+            wiki_slug=resolved.slug,
+            wiki_root=resolved.path,
+            author=acting_author,
+            processor=processor,
+            remove_source_path=inbox_path,
+            preclassified_label=label,
+        )
+        _clear_inbox_status(resolved.path, inbox_path.name)
+        results.append(replace(result, message=inbox_path.name))
+    return results
+
+
+def _ingest_source_content(
+    source_ref: str,
+    *,
+    source: _SourceContent,
+    wiki_slug: str,
+    wiki_root: Path,
+    author: str,
+    processor: Processor | None,
+    remove_source_path: Path | None,
+    preclassified_label: ClassLabel | None = None,
+) -> IngestResult:
+    label = preclassified_label or classify_source(source.name, source.content, wiki_root=wiki_root)
     digest = hashlib.sha256(source.content).hexdigest()
     now = _utc_now()
     today = now[:10]
-    wiki_root = resolved.path
     existing_pages = tuple(_existing_pages(wiki_root))
 
     if source.url:
@@ -202,14 +293,15 @@ def ingest_source(
             raise ProcessorError("processor produced no pages")
         return _materialize_ingest(
             wiki_root,
-            wiki_slug=resolved.slug,
+            wiki_slug=wiki_slug,
             source=source,
             label=label,
             request=request,
             planned_pages=planned_pages,
             digest=digest,
             now=now,
-            author=acting_author,
+            author=author,
+            remove_source_path=remove_source_path,
         )
     except Exception as exc:
         if isinstance(exc, IngestError):
@@ -249,11 +341,169 @@ def list_inbox(*, wiki: str | None = None) -> list[dict[str, str]]:
     inbox = resolved.path / "raw" / "inbox"
     if not inbox.exists():
         return []
+    statuses = _load_inbox_status(resolved.path)
     rows: list[dict[str, str]] = []
     for path in sorted(item for item in inbox.iterdir() if item.is_file()):
-        status = "oversized" if path.stat().st_size > MAX_INGEST_BYTES else "not yet attempted"
+        recorded = statuses.get(path.name, {})
+        status = str(recorded.get("status") or "")
+        if not status:
+            status = "oversized" if path.stat().st_size > MAX_INGEST_BYTES else "not yet attempted"
         rows.append({"path": str(path), "name": path.name, "status": status})
     return rows
+
+
+def _record_direct_inbox_status_if_applicable(
+    wiki_root: Path,
+    *,
+    source: _SourceContent,
+    status: str,
+    classified_as: str,
+    author: str,
+) -> None:
+    if source.url is not None:
+        return
+    try:
+        path = Path(source.ref).resolve()
+        path.relative_to((wiki_root / "raw" / "inbox").resolve())
+    except ValueError:
+        return
+    if path.parent != (wiki_root / "raw" / "inbox").resolve():
+        return
+    _record_inbox_attempt(
+        wiki_root,
+        inbox_path=path,
+        status=status,
+        classified_as=classified_as,
+        author=author,
+    )
+
+
+def _record_inbox_attempt(
+    wiki_root: Path,
+    *,
+    inbox_path: Path,
+    status: str,
+    classified_as: str,
+    author: str,
+) -> IngestResult:
+    now = _utc_now()
+    relpath = inbox_path.relative_to(wiki_root).as_posix()
+    digest = hashlib.sha256(inbox_path.read_bytes()).hexdigest()
+    status_path = wiki_root / INBOX_STATUS_REL
+    log_path = wiki_root / "log.md"
+    touched: dict[Path, bytes | None] = {}
+    _remember(touched, status_path)
+    _remember(touched, log_path)
+    try:
+        statuses = _load_inbox_status(wiki_root)
+        statuses[inbox_path.name] = {
+            "status": status,
+            "classified_as": classified_as,
+            "last_attempted_at": now,
+            "path": relpath,
+            "sha256": digest,
+        }
+        _write_inbox_status(wiki_root, statuses)
+        _append_inbox_attempt_log(
+            wiki_root,
+            now=now,
+            source_ref=relpath,
+            status=status,
+            classified_as=classified_as,
+            author=author,
+        )
+        with db.connect_wiki(wiki_root / "wiki.db") as conn:
+            db.insert_ingest_log(
+                conn,
+                ingested_at=now,
+                source_type=classified_as,
+                source_url=None,
+                source_path=relpath,
+                sha256=digest,
+                pages_created=[],
+                pages_updated=[],
+                drift_detected=0,
+                author=author,
+                author_kind="human",
+            )
+            conn.commit()
+        commit = git_ops.commit_change(
+            wiki_root,
+            action="inbox",
+            what=f"{status} {inbox_path.name}",
+            author=author,
+        )
+    except Exception:
+        _restore(touched)
+        raise
+    return IngestResult(
+        wiki=wiki_root.name,
+        classified_as=classified_as,
+        source_id=relpath,
+        sha256=digest,
+        pages_created=(),
+        pages_updated=(),
+        raw_snapshot=relpath,
+        source_url=None,
+        commit_id=commit.commit_id,
+        skipped=True,
+        message=inbox_path.name,
+    )
+
+
+def _load_inbox_status(wiki_root: Path) -> dict[str, dict[str, str]]:
+    status_path = wiki_root / INBOX_STATUS_REL
+    if not status_path.exists():
+        return {}
+    try:
+        loaded = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    statuses: dict[str, dict[str, str]] = {}
+    for key, value in loaded.items():
+        if isinstance(key, str) and isinstance(value, dict):
+            statuses[key] = {
+                str(inner_key): str(inner_value)
+                for inner_key, inner_value in value.items()
+            }
+    return statuses
+
+
+def _write_inbox_status(wiki_root: Path, statuses: dict[str, dict[str, str]]) -> None:
+    status_path = wiki_root / INBOX_STATUS_REL
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(
+        json.dumps(statuses, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _clear_inbox_status(wiki_root: Path, filename: str) -> None:
+    statuses = _load_inbox_status(wiki_root)
+    if filename not in statuses:
+        return
+    statuses.pop(filename, None)
+    _write_inbox_status(wiki_root, statuses)
+
+
+def _append_inbox_attempt_log(
+    wiki_root: Path,
+    *,
+    now: str,
+    source_ref: str,
+    status: str,
+    classified_as: str,
+    author: str,
+) -> None:
+    details = json.dumps(
+        {"source": source_ref, "status": status, "class": classified_as},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    with (wiki_root / "log.md").open("a", encoding="utf-8") as handle:
+        handle.write(f"| {now} | inbox | {source_ref} | {author} | human | {details} |\n")
 
 
 def _materialize_ingest(
@@ -267,6 +517,7 @@ def _materialize_ingest(
     digest: str,
     now: str,
     author: str,
+    remove_source_path: Path | None = None,
 ) -> IngestResult:
     touched: dict[Path, bytes | None] = {}
     wiki_db = wiki_root / "wiki.db"
@@ -275,6 +526,8 @@ def _materialize_ingest(
     _remember(touched, wiki_root / "log.md")
     raw_path = wiki_root / request.snapshot_relpath
     _remember(touched, raw_path)
+    if remove_source_path is not None:
+        _remember(touched, remove_source_path)
 
     pages_created: list[str] = []
     pages_updated: list[str] = []
@@ -282,6 +535,8 @@ def _materialize_ingest(
     try:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         raw_path.write_bytes(source.content)
+        if remove_source_path is not None and remove_source_path.resolve() != raw_path.resolve():
+            remove_source_path.unlink()
         for generated in planned_pages:
             page = generated.page
             page_path = wiki_root / f"{page.id}.md"
@@ -838,6 +1093,7 @@ __all__ = [
     "ProcessRequest",
     "ProcessorError",
     "classify_source",
+    "ingest_inbox",
     "ingest_source",
     "list_inbox",
     "search_wiki",

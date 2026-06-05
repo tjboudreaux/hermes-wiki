@@ -396,3 +396,197 @@ def test_empty_inbox_and_plugin_hash_mismatch_listing(tmp_path: Path, capsys) ->
     out = capsys.readouterr().out
     assert "foo" in out
     assert "hash-mismatch" in out or "disabled" in out
+
+
+def test_ingest_without_source_refuses_and_does_not_process_inbox(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """A missing path is never treated as implicit inbox batch ingest."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    inbox_file = wiki_root / "raw" / "inbox" / "pending-article.md"
+    _write_article(inbox_file, title="Pending Inbox Article")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", "--wiki", "ai-tooling") == 1
+    captured = capsys.readouterr()
+    assert "requires <path|url> or explicit --inbox" in captured.err
+    assert inbox_file.is_file()
+    assert not list((wiki_root / "sources").glob("*.md"))
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM pages").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM sources").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone() == (0,)
+
+
+def test_inbox_listing_status_invisibility_and_explicit_batch_processing(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Inbox files are listed/statused, hidden until processing, and scoped per wiki."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    assert _run_cli(tmp_path, "create", "other-wiki") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    other_root = tmp_path / "wikis" / "other-wiki"
+    inbox = wiki_root / "raw" / "inbox"
+    other_inbox_file = other_root / "raw" / "inbox" / "other-article.md"
+    first = inbox / "agent-memory-article.md"
+    second = inbox / "memory-workshop-transcript.txt"
+    unknown = inbox / "mystery.bin"
+    _write_article(first, title="Inbox Agent Memory")
+    second.write_text(
+        "\n".join(
+            [
+                "Alice: We should preserve BatchOnlyTerm in the Hermes Wiki.",
+                "Bob: The transcript remains useful after inbox ingest.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    unknown.write_bytes(b"\x00\x01\x02\x03")
+    _write_article(other_inbox_file, title="Other Wiki Inbox")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "inbox", "--wiki", "ai-tooling") == 0
+    out = capsys.readouterr().out
+    assert "agent-memory-article.md: not yet attempted" in out
+    assert "memory-workshop-transcript.txt: not yet attempted" in out
+    assert "mystery.bin: not yet attempted" in out
+    assert "agent-memory-article.md" not in (wiki_root / "index.md").read_text(encoding="utf-8")
+    assert _run_cli(tmp_path, "search", "BatchOnlyTerm", "--wiki", "ai-tooling") == 0
+    assert "No results." in capsys.readouterr().out
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM pages WHERE body_text LIKE '%BatchOnlyTerm%'"
+        ).fetchone() == (0,)
+        assert conn.execute(
+            "SELECT count(*) FROM ingest_log WHERE source_path LIKE '%agent-memory-article.md%'"
+        ).fetchone() == (0,)
+
+    assert _run_cli(tmp_path, "ingest", "--inbox", "--wiki", "ai-tooling") == 0
+    out = capsys.readouterr().out
+    assert "Ingested agent-memory-article.md class=article" in out
+    assert "Ingested memory-workshop-transcript.txt class=transcript" in out
+    assert "Retained mystery.bin class=unknown" in out
+    assert not first.exists()
+    assert not second.exists()
+    assert unknown.is_file()
+    assert other_inbox_file.is_file()
+    assert list((wiki_root / "raw" / "articles").glob("*-v1-inbox-agent-memory.md"))
+    assert list((wiki_root / "raw" / "transcripts").glob("*-v1-memory-workshop-transcript.txt"))
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM sources").fetchone()[0] == 2
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone()[0] == 3
+
+    assert _run_cli(tmp_path, "inbox", "--wiki", "ai-tooling") == 0
+    assert "mystery.bin: unknown" in capsys.readouterr().out
+    assert _run_cli(tmp_path, "search", "BatchOnlyTerm", "--wiki", "ai-tooling") == 0
+    assert "sources/" in capsys.readouterr().out
+
+
+def test_inbox_oversize_cap_boundary_and_direct_refusal(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    """Only files larger than the cap are marked oversized; direct oversize is refused."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    inbox = wiki_root / "raw" / "inbox"
+    under = inbox / "under-cap.md"
+    over = inbox / "over-cap.md"
+    direct = tmp_path / "direct-over.md"
+    _write_article(under, title="Under Cap Article")
+    under_bytes = under.read_bytes()
+    over.write_bytes(under_bytes + b"\nextra")
+    direct.write_bytes(under_bytes + b"\nextra")
+    monkeypatch.setattr(pipeline, "MAX_INGEST_BYTES", len(under_bytes))
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", "--inbox", "--wiki", "ai-tooling") == 0
+    out = capsys.readouterr().out
+    assert "Ingested under-cap.md class=article" in out
+    assert "Skipped over-cap.md status=oversized" in out
+    assert not under.exists()
+    assert over.is_file()
+    assert list((wiki_root / "raw" / "articles").glob("*-v1-under-cap-article.md"))
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM sources").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM pages").fetchone()[0] >= 2
+
+    assert _run_cli(tmp_path, "inbox", "--wiki", "ai-tooling") == 0
+    assert "over-cap.md: oversized" in capsys.readouterr().out
+    assert _run_cli(tmp_path, "ingest", str(direct), "--wiki", "ai-tooling") == 1
+    captured = capsys.readouterr()
+    assert "oversized" in captured.err
+    assert direct.is_file()
+
+
+def test_url_fetch_failure_and_same_slug_collisions_do_not_corrupt_state(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    """Failed URL fetches create no artifacts; same-day same-slug ingests avoid overwrites."""
+    import urllib.error
+    from email.message import Message
+
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    first = tmp_path / "first.md"
+    second = tmp_path / "second.md"
+    _write_article(first, title="Collision Article")
+    _write_article(second, title="Collision Article")
+    second.write_text(second.read_text(encoding="utf-8") + "\nDistinct second bytes.\n")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", str(first), "--wiki", "ai-tooling") == 0
+    first_source = _latest_source_page(wiki_root)
+    first_raw = wiki_root / _latest_source_path(wiki_root)
+    first_raw_bytes = first_raw.read_bytes()
+    assert _run_cli(tmp_path, "ingest", str(second), "--wiki", "ai-tooling") == 0
+    capsys.readouterr()
+    source_pages = sorted((wiki_root / "sources").glob("*.md"))
+    raw_snapshots = sorted((wiki_root / "raw" / "articles").glob("*.md"))
+    assert len(source_pages) == 2
+    assert len(raw_snapshots) == 2
+    assert first_source in source_pages
+    assert first_raw.read_bytes() == first_raw_bytes
+
+    commits_before = _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip()
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        logs_before = conn.execute("SELECT count(*) FROM ingest_log").fetchone()[0]
+        sources_before = conn.execute("SELECT count(*) FROM sources").fetchone()[0]
+    files_before = sorted(
+        path.relative_to(wiki_root) for path in wiki_root.rglob("*") if path.is_file()
+    )
+
+    def fail_urlopen(*_args: object, **_kwargs: object) -> object:
+        raise urllib.error.HTTPError(
+            "https://example.invalid/missing-404",
+            404,
+            "Not Found",
+            hdrs=Message(),
+            fp=None,
+        )
+
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", fail_urlopen)
+    assert _run_cli(
+        tmp_path,
+        "ingest",
+        "https://example.invalid/missing-404",
+        "--wiki",
+        "ai-tooling",
+    ) == 1
+    captured = capsys.readouterr()
+    assert "failed to fetch URL" in captured.err
+    assert "Traceback" not in captured.err
+    assert _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip() == commits_before
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone()[0] == logs_before
+        assert conn.execute("SELECT count(*) FROM sources").fetchone()[0] == sources_before
+    files_after = sorted(
+        path.relative_to(wiki_root) for path in wiki_root.rglob("*") if path.is_file()
+    )
+    assert files_after == files_before
