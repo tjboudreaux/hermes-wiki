@@ -25,7 +25,7 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
-from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors
+from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors, sweep_external_source
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
@@ -257,8 +257,34 @@ def wiki_command(args: argparse.Namespace) -> int:
                 for message in result.cron.errors:
                     print(message, file=sys.stderr)
                 return 0 if result.ok else 1
+            if args.sweep_url:
+                result = sweep_external_source(
+                    args.sweep_url,
+                    wiki=args.wiki,
+                    profile=args.profile,
+                    name=args.name,
+                )
+                ingest = result.ingest
+                if ingest.skipped:
+                    print(
+                        f"Sweep no change {result.source_url} "
+                        f"source={ingest.source_id} author={result.job_name}"
+                    )
+                    return 0
+                print(
+                    f"Sweep ingested {result.source_url} class={ingest.classified_as} "
+                    f"source={ingest.source_id} author={result.job_name} "
+                    f"drift_detected={1 if ingest.drift_detected else 0}"
+                )
+                print("pages_created: " + ", ".join(ingest.pages_created))
+                if ingest.pages_updated:
+                    print("pages_updated: " + ", ".join(ingest.pages_updated))
+                return 0
             if not args.source:
-                print("monitor requires --source unless --setup is used", file=sys.stderr)
+                print(
+                    "monitor requires --source unless --setup or --sweep-url is used",
+                    file=sys.stderr,
+                )
                 return 1
             result = define_monitor(
                 source=args.source,
@@ -493,6 +519,10 @@ def _add_management_subcommands(
     monitor.add_argument("--name", help="Monitor name to create/update (defaults by source)")
     monitor.add_argument("--schedule", help="Cron schedule stored with the portable definition")
     monitor.add_argument("--prompt", help="Prompt payload stored with the portable definition")
+    monitor.add_argument(
+        "--sweep-url",
+        help="Run the named monitor against one matched external URL",
+    )
     monitor.add_argument(
         "--skill",
         dest="skills",

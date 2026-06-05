@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime
+from email.message import Message
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
+import yaml
+
+from hermes_wiki import pipeline
 from hermes_wiki_cli.cli import main
 
 
@@ -59,6 +65,28 @@ def _cron_jobs(home: Path) -> dict[str, dict[str, object]]:
     loaded = json.loads(store.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
+
+
+class _FakeUrlResponse:
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+
+    def __enter__(self) -> _FakeUrlResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _limit: int = -1) -> bytes:
+        return self._content
+
+
+def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+    text = path.read_text(encoding="utf-8")
+    _, metadata_text, body = text.split("---", 2)
+    metadata = yaml.safe_load(metadata_text) or {}
+    assert isinstance(metadata, dict)
+    return metadata, body
 
 
 def test_monitor_source_persists_portable_definition_without_cron_job(tmp_path: Path) -> None:
@@ -318,3 +346,174 @@ def test_monitor_setup_reports_collisions_and_invalid_schedules_without_clobber(
     jobs = _cron_jobs(tmp_path)
     assert jobs["wiki:ai-tooling:weekly-arxiv-sweep"] == foreign
     assert "wiki:ai-tooling:daily-rss-sweep" not in jobs
+
+
+def test_monitor_sweep_url_dedups_drifts_and_attributes_cron(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A monitor sweep feeds URL ingest, sha dedup, drift rows, lint, and cron attribution."""
+    wiki_root = _create_wiki(tmp_path, "ai-tooling")
+    code, _out, err = _run_cli(tmp_path, "monitor", "--wiki", "ai-tooling", "--source", "arxiv")
+    assert code == 0, err
+    code, _out, err = _run_cli(tmp_path, "monitor", "--wiki", "ai-tooling", "--setup", "--yes")
+    assert code == 0, err
+    assert "wiki:ai-tooling:weekly-arxiv-sweep" in _cron_jobs(tmp_path)
+    url = "https://example.test/weekly-hermes-drift.md"
+    contents = [
+        "\n".join(
+            [
+                "# Weekly Hermes Drift",
+                "",
+                "Clipped article about monitor sweeps and Source Snapshots.",
+            ]
+        ).encode(),
+        "\n".join(
+            [
+                "# Weekly Hermes Drift",
+                "",
+                "Clipped article about monitor sweeps, Source Snapshots, and drift changes.",
+            ]
+        ).encode(),
+    ]
+    current = {"content": contents[0]}
+
+    def fake_urlopen(*_args: object, **_kwargs: object) -> _FakeUrlResponse:
+        return _FakeUrlResponse(current["content"])
+
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", fake_urlopen)
+
+    code, out, err = _run_cli(
+        tmp_path,
+        "monitor",
+        "--wiki",
+        "ai-tooling",
+        "--name",
+        "weekly-arxiv-sweep",
+        "--sweep-url",
+        url,
+    )
+    assert code == 0, err
+    assert "Sweep ingested" in out
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        conn.row_factory = sqlite3.Row
+        first_source = conn.execute("SELECT * FROM sources WHERE source_url=?", (url,)).fetchone()
+        first_log = conn.execute("SELECT * FROM ingest_log ORDER BY id DESC LIMIT 1").fetchone()
+    assert first_source is not None
+    assert first_source["version"] == 1
+    assert first_source["is_latest"] == 1
+    assert first_log["author"] == "cron:wiki:ai-tooling:weekly-arxiv-sweep"
+    assert first_log["author_kind"] == "cron"
+    first_raw = wiki_root / str(first_source["id"])
+    first_raw_bytes = first_raw.read_bytes()
+    commits_after_first = int(_git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip())
+
+    code, out, err = _run_cli(
+        tmp_path,
+        "monitor",
+        "--wiki",
+        "ai-tooling",
+        "--name",
+        "weekly-arxiv-sweep",
+        "--sweep-url",
+        url,
+    )
+    assert code == 0, err
+    assert "no change" in out
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM sources WHERE source_url=?", (url,)).fetchone()[
+            0
+        ] == 1
+    assert int(_git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip()) == commits_after_first
+
+    current["content"] = contents[1]
+    code, out, err = _run_cli(
+        tmp_path,
+        "monitor",
+        "--wiki",
+        "ai-tooling",
+        "--name",
+        "weekly-arxiv-sweep",
+        "--sweep-url",
+        url,
+    )
+    assert code == 0, err
+    assert "drift_detected=1" in out
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        conn.row_factory = sqlite3.Row
+        rows = list(
+            conn.execute(
+                "SELECT * FROM sources WHERE source_url=? ORDER BY version",
+                (url,),
+            )
+        )
+        latest_log = conn.execute(
+            "SELECT * FROM ingest_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert [(row["version"], row["is_latest"]) for row in rows] == [(1, 0), (2, 1)]
+    assert rows[1]["previous_source_id"] == rows[0]["id"]
+    assert rows[0]["sha256"] != rows[1]["sha256"]
+    assert first_raw.read_bytes() == first_raw_bytes
+    assert (wiki_root / str(rows[1]["id"])).is_file()
+    assert latest_log["drift_detected"] == 1
+    assert latest_log["sha256"] == rows[1]["sha256"]
+    assert latest_log["author"] == "cron:wiki:ai-tooling:weekly-arxiv-sweep"
+    assert latest_log["author_kind"] == "cron"
+    updated_page = wiki_root / "entities" / "weekly-hermes-drift.md"
+    metadata, body = _read_frontmatter(updated_page)
+    assert rows[1]["id"] in metadata["sources"]
+    assert metadata["author"] == "cron:wiki:ai-tooling:weekly-arxiv-sweep"
+    assert metadata["author_kind"] == "cron"
+    assert "drift changes" in body
+    assert "cron:wiki:ai-tooling:weekly-arxiv-sweep" in _git(
+        wiki_root, "log", "-1", "--pretty=%s"
+    ).stdout
+
+    code, lint_out, err = _run_cli(tmp_path, "lint", "--wiki", "ai-tooling")
+    assert code == 0, err
+    report = json.loads(lint_out)
+    assert any(finding["check"] == "external_source_drift" for finding in report["findings"])
+    assert not [finding for finding in report["findings"] if finding["check"] == "broken_link"]
+
+
+def test_monitor_sweep_unreachable_url_has_no_side_effects(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """An unreachable URL during a sweep fails cleanly without snapshot, DB, or git writes."""
+    wiki_root = _create_wiki(tmp_path, "ai-tooling")
+    code, _out, err = _run_cli(tmp_path, "monitor", "--wiki", "ai-tooling", "--source", "rss")
+    assert code == 0, err
+    commits_before = _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip()
+
+    def fail_urlopen(*_args: object, **_kwargs: object) -> object:
+        raise pipeline.urllib.error.HTTPError(
+            "https://example.invalid/unreachable",
+            503,
+            "Service Unavailable",
+            hdrs=Message(),
+            fp=None,
+        )
+
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", fail_urlopen)
+
+    code, out, err = _run_cli(
+        tmp_path,
+        "monitor",
+        "--wiki",
+        "ai-tooling",
+        "--name",
+        "daily-rss-sweep",
+        "--sweep-url",
+        "https://example.invalid/unreachable",
+    )
+
+    assert code == 1
+    assert out == ""
+    assert "failed to fetch URL" in err
+    assert _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip() == commits_before
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM sources").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone() == (0,)
+    assert not list((wiki_root / "raw" / "articles").glob("*"))
+    assert _git(wiki_root, "status", "--porcelain").stdout.strip() == ""

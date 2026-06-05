@@ -103,6 +103,7 @@ class IngestResult:
     commit_id: str | None
     skipped: bool = False
     message: str = ""
+    drift_detected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -699,6 +700,7 @@ def _materialize_ingest(
         source_url=source.url,
         commit_id=commit.commit_id,
         message=f"ingested {source.ref}",
+        drift_detected=version_plan.drift_detected,
     )
 
 

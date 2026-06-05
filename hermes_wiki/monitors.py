@@ -18,6 +18,7 @@ from hermes_wiki.management import (
     WikiManagementError,
     ensure_wiki_mutable,
 )
+from hermes_wiki.pipeline import IngestError, IngestResult, ingest_source
 
 SUPPORTED_SOURCES = frozenset({"arxiv", "rss", "x"})
 
@@ -69,6 +70,17 @@ class SetupMonitorResult:
     @property
     def ok(self) -> bool:
         return not self.cron.failed and not self.cron.errors
+
+
+@dataclass(frozen=True, slots=True)
+class SweepResult:
+    """Result returned after running one monitor-owned external-source sweep."""
+
+    wiki: str
+    monitor_name: str
+    job_name: str
+    source_url: str
+    ingest: IngestResult
 
 
 def define_monitor(
@@ -179,6 +191,49 @@ def setup_monitors(
     )
 
 
+def sweep_external_source(
+    source_url: str,
+    *,
+    wiki: str | None = None,
+    profile: str | None = None,
+    name: str | None = None,
+) -> SweepResult:
+    """Run one monitor-owned external URL sweep and feed the ingest pipeline.
+
+    Search-provider discovery remains outside this deterministic core. This
+    function is the cron execution surface for a matched external URL: fetch,
+    sha256 dedup, append-only Source Snapshot versioning, drift re-ingestion,
+    and cron attribution all flow through ``ingest_source``.
+    """
+
+    clean_url = _one_line(source_url, "source_url")
+    if not (clean_url.startswith("http://") or clean_url.startswith("https://")):
+        raise MonitorError("monitor sweep requires an http(s) URL")
+    try:
+        resolved = ensure_wiki_mutable(slug=wiki, profile=profile)
+    except WikiManagementError as exc:
+        raise MonitorError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+    monitor_name = _resolve_sweep_monitor_name(resolved.path, name=name)
+    job_name = f"wiki:{resolved.slug}:{monitor_name}"
+    try:
+        ingest = ingest_source(
+            clean_url,
+            wiki=resolved.slug,
+            author=job_name,
+            author_kind="cron",
+        )
+    except IngestError as exc:
+        raise MonitorError(str(exc)) from exc
+    return SweepResult(
+        wiki=resolved.slug,
+        monitor_name=monitor_name,
+        job_name=job_name,
+        source_url=clean_url,
+        ingest=ingest,
+    )
+
+
 def read_schema_monitor_records(wiki_root: Path | str) -> list[dict[str, Any]]:
     """Parse canonical Monitor records from ``SCHEMA.md`` marker blocks."""
 
@@ -206,6 +261,21 @@ def read_schema_monitor_records(wiki_root: Path | str) -> list[dict[str, Any]]:
             records.append(normalized)
     records.sort(key=lambda row: str(row["name"]))
     return records
+
+
+def _resolve_sweep_monitor_name(wiki_root: Path, *, name: str | None) -> str:
+    records = read_schema_monitor_records(wiki_root)
+    if name is not None:
+        clean_name = _validate_name(name)
+        if not any(str(record.get("name")) == clean_name for record in records):
+            raise MonitorError(f"monitor {clean_name!r} is not defined in SCHEMA.md")
+        return clean_name
+    enabled = [record for record in records if bool(record.get("enabled", True))]
+    if len(enabled) == 1:
+        return _validate_name(str(enabled[0].get("name") or ""))
+    if not enabled:
+        raise MonitorError("no enabled monitor definition found for sweep")
+    raise MonitorError("multiple monitors are defined; pass --name for the sweep")
 
 
 def _replace_schema_monitor_record(wiki_root: Path, definition: MonitorDefinition) -> bool:
@@ -382,7 +452,9 @@ __all__ = [
     "MonitorDefinition",
     "MonitorError",
     "SetupMonitorResult",
+    "SweepResult",
     "define_monitor",
     "read_schema_monitor_records",
     "setup_monitors",
+    "sweep_external_source",
 ]

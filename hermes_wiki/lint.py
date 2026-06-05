@@ -324,6 +324,13 @@ def _page_content_findings(
             resolved_target = (page["path"].parent / target.split("#", 1)[0]).resolve()
             if resolved_target.suffix != ".md":
                 continue
+            if resolved_target not in existing_files and resolved_target.is_file():
+                try:
+                    resolved_target.relative_to(wiki_root.resolve())
+                except ValueError:
+                    pass
+                else:
+                    continue
             if resolved_target not in existing_files:
                 findings.append(
                     _finding(
