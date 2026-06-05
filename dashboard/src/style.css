@@ -212,10 +212,34 @@
 }
 
 .hermes-wiki-result-list,
-.hermes-wiki-inbox-list {
+.hermes-wiki-inbox-list,
+.hermes-wiki-finding-list,
+.hermes-wiki-activity-list {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.hermes-wiki-severity-filters {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.hermes-wiki-severity-filters label {
+  align-items: center;
+  color: var(--foreground, #e2e8f0);
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.hermes-wiki-finding {
+  border-color: var(--border, #334155);
+}
+
+.hermes-wiki-notice {
+  border-color: color-mix(in srgb, var(--success, #22c55e) 40%, var(--border, #334155));
 }
 
 .hermes-wiki-result-row {

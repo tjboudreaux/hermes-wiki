@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from fixtures import build_populated_home
+from hermes_wiki.attribution import append_log_entry
 
 
 def _load_plugin_api() -> Any:
@@ -96,6 +97,71 @@ def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
     assert log["items"]
     assert log["pagination"]["total"] >= len(log["items"])
     assert all(item["author_kind"] == "agent" for item in log["items"])
+
+
+def test_health_report_exposes_all_severities_for_dashboard_filters(plugin_api: Any) -> None:
+    health = plugin_api.get_health("ai-tooling")
+
+    severities = {finding["severity"] for finding in health["findings"]}
+
+    assert {"high", "medium", "low"} <= severities
+    assert health["summary"]["high"] >= 1
+    assert health["summary"]["medium"] >= 1
+    assert health["summary"]["low"] >= 1
+
+
+def test_log_filters_combine_and_paginate(plugin_api: Any) -> None:
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+    append_log_entry(
+        wiki_root,
+        timestamp="2026-06-05T03:00:00Z",
+        action="create-page",
+        target="concepts/agent-a",
+        author="claude-dashboard",
+        author_kind="agent",
+        details="agent row one",
+    )
+    append_log_entry(
+        wiki_root,
+        timestamp="2026-06-05T03:01:00Z",
+        action="edit",
+        target="concepts/agent-b",
+        author="claude-dashboard",
+        author_kind="agent",
+        details="agent row two",
+    )
+    append_log_entry(
+        wiki_root,
+        timestamp="2026-06-05T03:02:00Z",
+        action="edit",
+        target="concepts/human",
+        author="claude-dashboard",
+        author_kind="human",
+        details="same author different kind",
+    )
+
+    first = plugin_api.get_log(
+        "ai-tooling",
+        page=1,
+        page_size=1,
+        author="claude-dashboard",
+        kind="agent",
+    )
+    second = plugin_api.get_log(
+        "ai-tooling",
+        page=2,
+        page_size=1,
+        author="claude-dashboard",
+        kind="agent",
+    )
+
+    assert first["pagination"]["total"] == 2
+    assert first["pagination"]["has_next"] is True
+    assert first["items"][0]["target"] == "concepts/agent-a"
+    assert second["pagination"]["has_previous"] is True
+    assert second["items"][0]["target"] == "concepts/agent-b"
+    assert all(item["author"] == "claude-dashboard" for item in first["items"] + second["items"])
+    assert all(item["author_kind"] == "agent" for item in first["items"] + second["items"])
 
 
 def test_global_and_scoped_search_rank_visibility_and_click_payload(

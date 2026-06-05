@@ -97,14 +97,26 @@ type ActivityEntry = {
 };
 
 type ActivityResponse = {
+  wiki?: string;
   items: ActivityEntry[];
   pagination: Pagination;
+  filters?: { author?: string | null; kind?: string | null };
+};
+
+type HealthFinding = {
+  severity?: string;
+  check?: string;
+  code?: string;
+  message?: string;
+  page_id?: string;
+  path?: string;
+  target?: string;
 };
 
 type HealthReport = {
   health_score?: number;
   summary?: Record<string, number>;
-  findings?: Array<{ severity?: string; check?: string; message?: string }>;
+  findings?: HealthFinding[];
 };
 
 type PageReference = {
@@ -201,6 +213,14 @@ if (SDK && window.__HERMES_PLUGINS__) {
 
   function pathForInbox(slug: string) {
     return `${pathForWiki(slug)}/inbox`;
+  }
+
+  function pathForHealth(slug: string) {
+    return `${pathForWiki(slug)}/health`;
+  }
+
+  function pathForLog(slug: string) {
+    return `${pathForWiki(slug)}/log`;
   }
 
   function pathForSearch(query = "", wiki = "") {
@@ -441,6 +461,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
           { className: "hermes-wiki-health-panel" },
           h("a", { className: "hermes-wiki-action-link", href: pathForSearch("", summary.slug), onClick: onNavigate(pathForSearch("", summary.slug)) }, "Search this Wiki"),
           h("a", { className: "hermes-wiki-action-link", href: pathForInbox(summary.slug), onClick: onNavigate(pathForInbox(summary.slug)) }, "Inbox"),
+          h("a", { className: "hermes-wiki-action-link", href: pathForHealth(summary.slug), onClick: onNavigate(pathForHealth(summary.slug)) }, "Health"),
+          h("a", { className: "hermes-wiki-action-link", href: pathForLog(summary.slug), onClick: onNavigate(pathForLog(summary.slug)) }, "Activity"),
           h(Badge, { className: `hermes-wiki-health hermes-wiki-health-${healthTone(score)}` }, `Health ${formatScore(score)}`),
           h("span", null, `${summary.page_count} pages`),
           h("span", null, `Last ingest ${relativeTime(summary.last_ingest)}`),
@@ -520,8 +542,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
         h(
           "aside",
           { className: "hermes-wiki-side-stack" },
-          h(HealthCard, { score, health }),
-          h(ActivityTimeline, { entries: activity }),
+          h(HealthCard, { score, health, slug: summary.slug }),
+          h(ActivityTimeline, { entries: activity, slug: summary.slug }),
         ),
       ),
     );
@@ -581,7 +603,7 @@ if (SDK && window.__HERMES_PLUGINS__) {
     );
   }
 
-  function HealthCard(props: { score: number; health: HealthReport | null }) {
+  function HealthCard(props: { score: number; health: HealthReport | null; slug?: string }) {
     const summary = props.health?.summary || {};
     const severities = Object.entries(summary).filter(([_key, value]) => Number(value) > 0);
     return h(
@@ -595,11 +617,14 @@ if (SDK && window.__HERMES_PLUGINS__) {
         severities.length
           ? h("ul", null, ...severities.map(([severity, count]) => h("li", { key: severity }, `${severity}: ${count}`)))
           : h("p", null, "No lint findings reported."),
+        props.slug
+          ? h("a", { className: "hermes-wiki-action-link", href: pathForHealth(props.slug), onClick: onNavigate(pathForHealth(props.slug)) }, "Open Health")
+          : null,
       ),
     );
   }
 
-  function ActivityTimeline(props: { entries: ActivityEntry[] }) {
+  function ActivityTimeline(props: { entries: ActivityEntry[]; slug?: string }) {
     return h(
       Card,
       null,
@@ -622,7 +647,339 @@ if (SDK && window.__HERMES_PLUGINS__) {
               ),
             )
           : h("p", null, "No activity recorded yet."),
+        props.slug
+          ? h("a", { className: "hermes-wiki-action-link", href: pathForLog(props.slug), onClick: onNavigate(pathForLog(props.slug)) }, "Open Activity")
+          : null,
       ),
+    );
+  }
+
+  function severityLabel(severity?: string | null) {
+    const value = (severity || "low").toLowerCase();
+    if (value === "high") return "🔴 high";
+    if (value === "medium") return "⚠️ medium";
+    return "💡 low";
+  }
+
+  function severityClass(severity?: string | null) {
+    const value = (severity || "low").toLowerCase();
+    if (value === "high") return "hermes-wiki-health-bad";
+    if (value === "medium") return "hermes-wiki-health-warn";
+    return "hermes-wiki-health-good";
+  }
+
+  function HealthRoute(props: { slug: string }) {
+    const [summary, setSummary] = useState<WikiSummary | null>(null);
+    const [report, setReport] = useState<HealthReport | null>(null);
+    const [selectedSeverities, setSelectedSeverities] = useState<string[]>([]);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string>("");
+
+    const load = useCallback(() => {
+      setLoading(true);
+      setError("");
+      Promise.all([
+        SDK.fetchJSON<WikiSummary>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
+        SDK.fetchJSON<HealthReport>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/health`),
+      ])
+        .then(([wikiRow, healthRows]) => {
+          setSummary(wikiRow);
+          setReport(healthRows);
+        })
+        .catch((err) => setError(messageOf(err)))
+        .finally(() => setLoading(false));
+    }, [props.slug]);
+
+    useEffect(() => {
+      load();
+    }, [load]);
+
+    const findings = report?.findings || [];
+    const counts = report?.summary || {};
+    const filteredFindings = useMemo(() => {
+      if (!selectedSeverities.length) return findings;
+      const selected = new Set(selectedSeverities);
+      return findings.filter((finding) => selected.has((finding.severity || "low").toLowerCase()));
+    }, [findings, selectedSeverities]);
+
+    const toggleSeverity = (severity: string) => {
+      setSelectedSeverities((previous) =>
+        previous.includes(severity) ? previous.filter((item) => item !== severity) : previous.concat(severity),
+      );
+    };
+
+    if (loading) return h(LoadingState, { label: "Loading Health…" });
+    if (error) {
+      if (isNotFound(error)) {
+        return h(
+          "main",
+          { className: "hermes-wiki" },
+          h(BackLink, { href: pathForWiki(props.slug), label: "← Back to Wiki" }),
+          h(ErrorState, { title: "Health report not found", message: "This Wiki health report was not found or is not visible." }),
+        );
+      }
+      return h(ErrorState, { title: "Failed to load Health", message: error, onRetry: load });
+    }
+
+    const score = Number(report?.health_score ?? summary?.health_score ?? 0);
+    const allSelected = selectedSeverities.length === 0;
+
+    return h(
+      "main",
+      { className: "hermes-wiki" },
+      h(BackLink, { href: pathForWiki(props.slug), label: "← Back to Wiki" }),
+      h(
+        "header",
+        { className: "hermes-wiki-detail-hero" },
+        h(
+          "div",
+          null,
+          h("p", { className: "hermes-wiki-eyebrow" }, "Wiki Health"),
+          h("h1", null, `${summary?.slug || props.slug} Health`),
+          h("p", { className: "hermes-wiki-domain" }, "Lint findings and consistency checks"),
+        ),
+        h(
+          "div",
+          { className: "hermes-wiki-health-panel" },
+          h(Badge, { className: `hermes-wiki-health hermes-wiki-health-${healthTone(score)}` }, `Score ${formatScore(score)}`),
+          h(Badge, null, `${findings.length} findings`),
+        ),
+      ),
+      h(
+        Card,
+        null,
+        h(CardHeader, null, h(CardTitle, null, "Severity filters")),
+        h(
+          CardContent,
+          null,
+          h(
+            "div",
+            { className: "hermes-wiki-severity-filters", "aria-label": "Filter lint findings by severity" },
+            ...["high", "medium", "low"].map((severity) =>
+              h(
+                "label",
+                { key: severity },
+                h("input", {
+                  type: "checkbox",
+                  checked: selectedSeverities.includes(severity),
+                  onChange: () => toggleSeverity(severity),
+                }),
+                `${severityLabel(severity)} (${Number(counts[severity] || 0)})`,
+              ),
+            ),
+            h(Button, { disabled: allSelected, onClick: () => setSelectedSeverities([]) }, "Clear severity filters"),
+          ),
+        ),
+      ),
+      findings.length === 0
+        ? h(EmptyState, { title: "Healthy Wiki", body: "No lint findings were reported for this Wiki." })
+        : filteredFindings.length
+          ? h(
+              "section",
+              { className: "hermes-wiki-finding-list", "data-testid": "wiki-health-findings" },
+              ...filteredFindings.map((finding, index) => h(HealthFindingRow, { key: `${finding.check || finding.code || "finding"}-${index}`, finding })),
+            )
+          : h(EmptyState, {
+              title: "No findings match those severities",
+              body: "Select additional severities or clear filters to restore the full lint report.",
+            }),
+    );
+  }
+
+  function HealthFindingRow(props: { finding: HealthFinding }) {
+    const finding = props.finding;
+    const severity = (finding.severity || "low").toLowerCase();
+    const target = finding.page_id || finding.target || finding.path || "";
+    return h(
+      Card,
+      { className: "hermes-wiki-finding", "data-severity": severity },
+      h(
+        CardHeader,
+        { className: "hermes-wiki-card-header" },
+        h(CardTitle, null, finding.check || finding.code || "lint finding"),
+        h(Badge, { className: severityClass(severity) }, severityLabel(severity)),
+      ),
+      h(
+        CardContent,
+        null,
+        h("p", null, finding.message || "No finding message was provided."),
+        target ? h("p", { className: "hermes-wiki-muted" }, target) : null,
+      ),
+    );
+  }
+
+  function ActivityRoute(props: { slug: string }) {
+    const [summary, setSummary] = useState<WikiSummary | null>(null);
+    const [entries, setEntries] = useState<ActivityEntry[]>([]);
+    const [allEntries, setAllEntries] = useState<ActivityEntry[]>([]);
+    const [pagination, setPagination] = useState<Pagination | null>(null);
+    const [authorFilter, setAuthorFilter] = useState<string>("");
+    const [kindFilter, setKindFilter] = useState<string>("");
+    const [pageNumber, setPageNumber] = useState<number>(1);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string>("");
+
+    const load = useCallback(() => {
+      setLoading(true);
+      setError("");
+      Promise.all([
+        SDK.fetchJSON<WikiSummary>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
+        SDK.fetchJSON<ActivityResponse>(activityUrl(props.slug, pageNumber, authorFilter, kindFilter, 5)),
+        SDK.fetchJSON<ActivityResponse>(activityUrl(props.slug, 1, "", "", 200)),
+      ])
+        .then(([wikiRow, logRows, allRows]) => {
+          setSummary(wikiRow);
+          setEntries(Array.isArray(logRows.items) ? logRows.items : []);
+          setPagination(logRows.pagination);
+          setAllEntries(Array.isArray(allRows.items) ? allRows.items : []);
+        })
+        .catch((err) => setError(messageOf(err)))
+        .finally(() => setLoading(false));
+    }, [props.slug, pageNumber, authorFilter, kindFilter]);
+
+    useEffect(() => {
+      load();
+    }, [load]);
+
+    const authorOptions = useMemo(
+      () => sortedUnique(allEntries.map((entry) => entry.author || "").filter(Boolean)),
+      [allEntries],
+    );
+    const kindOptions = useMemo(
+      () => sortedUnique(allEntries.map((entry) => entry.author_kind || "").filter(Boolean)),
+      [allEntries],
+    );
+
+    if (loading) return h(LoadingState, { label: "Loading Activity…" });
+    if (error) {
+      if (isNotFound(error)) {
+        return h(
+          "main",
+          { className: "hermes-wiki" },
+          h(BackLink, { href: pathForWiki(props.slug), label: "← Back to Wiki" }),
+          h(ErrorState, { title: "Activity log not found", message: "This Wiki activity log was not found or is not visible." }),
+        );
+      }
+      return h(ErrorState, { title: "Failed to load Activity", message: error, onRetry: load });
+    }
+
+    const canReset = Boolean(authorFilter || kindFilter);
+
+    return h(
+      "main",
+      { className: "hermes-wiki" },
+      h(BackLink, { href: pathForWiki(props.slug), label: "← Back to Wiki" }),
+      h(
+        "header",
+        { className: "hermes-wiki-detail-hero" },
+        h(
+          "div",
+          null,
+          h("p", { className: "hermes-wiki-eyebrow" }, "Wiki Activity"),
+          h("h1", null, `${summary?.slug || props.slug} Activity`),
+          h("p", { className: "hermes-wiki-domain" }, "Chronological attributed changes"),
+        ),
+        h(Badge, null, `${pagination?.total ?? entries.length} entries`),
+      ),
+      h(
+        Card,
+        null,
+        h(CardHeader, null, h(CardTitle, null, "Activity filters")),
+        h(
+          CardContent,
+          null,
+          h(
+            "div",
+            { className: "hermes-wiki-filters" },
+            h(
+              "label",
+              null,
+              "Author",
+              h(
+                "select",
+                {
+                  value: authorFilter,
+                  onChange: (event: Event) => {
+                    setAuthorFilter((event.target as HTMLSelectElement).value);
+                    setPageNumber(1);
+                  },
+                },
+                h("option", { value: "" }, "All authors"),
+                ...authorOptions.map((author) => h("option", { key: author, value: author }, author)),
+              ),
+            ),
+            h(
+              "label",
+              null,
+              "Kind",
+              h(
+                "select",
+                {
+                  value: kindFilter,
+                  onChange: (event: Event) => {
+                    setKindFilter((event.target as HTMLSelectElement).value);
+                    setPageNumber(1);
+                  },
+                },
+                h("option", { value: "" }, "All kinds"),
+                ...kindOptions.map((kind) => h("option", { key: kind, value: kind }, kind)),
+              ),
+            ),
+            h(
+              Button,
+              {
+                disabled: !canReset,
+                onClick: () => {
+                  setAuthorFilter("");
+                  setKindFilter("");
+                  setPageNumber(1);
+                },
+              },
+              "Reset filters",
+            ),
+          ),
+        ),
+      ),
+      entries.length
+        ? h(
+            "section",
+            { className: "hermes-wiki-activity-list", "data-testid": "wiki-activity-log" },
+            h(
+              "ol",
+              { className: "hermes-wiki-timeline" },
+              ...entries.map((entry, index) => h(ActivityLogRow, { key: `${entry.timestamp || entry.created || "entry"}-${index}`, entry })),
+            ),
+            pagination ? h(PaginationControls, { pagination, onPage: setPageNumber }) : null,
+          )
+        : h(EmptyState, {
+            title: "No activity entries",
+            body: canReset ? "No activity entries match the selected filters." : "No activity has been recorded for this Wiki yet.",
+          }),
+    );
+  }
+
+  function activityUrl(slug: string, page: number, author: string, kind: string, pageSize: number) {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    if (author) params.set("author", author);
+    if (kind) params.set("kind", kind);
+    return `/api/plugins/wiki/wikis/${encodeURIComponent(slug)}/log?${params.toString()}`;
+  }
+
+  function ActivityLogRow(props: { entry: ActivityEntry }) {
+    const entry = props.entry;
+    return h(
+      "li",
+      {
+        "data-author": entry.author || "",
+        "data-author-kind": entry.author_kind || "",
+        "data-timestamp": entry.timestamp || entry.created || "",
+      },
+      h("strong", null, entry.action || "change"),
+      h("span", null, entry.target || entry.page_id || "wiki"),
+      h("small", null, `${entry.author || "unknown"} · ${entry.author_kind || "unknown"} · ${entry.timestamp || entry.created || "unknown time"}`),
+      entry.details ? h("span", { className: "hermes-wiki-muted" }, entry.details) : null,
     );
   }
 
@@ -939,6 +1296,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string>("");
     const [busyFile, setBusyFile] = useState<string>("");
+    const [busyIngest, setBusyIngest] = useState<boolean>(false);
+    const [notice, setNotice] = useState<string>("");
 
     const load = useCallback(() => {
       setLoading(true);
@@ -962,6 +1321,7 @@ if (SDK && window.__HERMES_PLUGINS__) {
     const overrideClassifier = (filename: string, classifier: string) => {
       setBusyFile(filename);
       setError("");
+      setNotice("");
       SDK.fetchJSON<InboxItem>(
         `/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/inbox/${encodeURIComponent(filename)}/classify`,
         {
@@ -975,6 +1335,30 @@ if (SDK && window.__HERMES_PLUGINS__) {
         })
         .catch((err) => setError(messageOf(err)))
         .finally(() => setBusyFile(""));
+    };
+
+    const processInbox = () => {
+      setBusyIngest(true);
+      setError("");
+      setNotice("");
+      SDK.fetchJSON<{ results?: Array<{ pages_created?: string[]; pages_updated?: string[] }> }>(
+        `/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/ingest`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ inbox: true }),
+        },
+      )
+        .then((result) => {
+          const changedPages = (result.results || []).reduce(
+            (count, row) => count + (row.pages_created || []).length + (row.pages_updated || []).length,
+            0,
+          );
+          setNotice(changedPages ? `Processed inbox and updated ${changedPages} page${changedPages === 1 ? "" : "s"}.` : "Inbox processed; no pages changed.");
+          load();
+        })
+        .catch((err) => setError(messageOf(err)))
+        .finally(() => setBusyIngest(false));
     };
 
     if (loading) return h(LoadingState, { label: "Loading Inbox…" });
@@ -1004,9 +1388,15 @@ if (SDK && window.__HERMES_PLUGINS__) {
           h("h1", null, `${summary?.slug || props.slug} Inbox`),
           h("p", { className: "hermes-wiki-domain" }, "Unprocessed raw files and classifier assignments"),
         ),
-        h(Badge, null, `${items.length} pending`),
+        h(
+          "div",
+          { className: "hermes-wiki-health-panel" },
+          h(Badge, null, `${items.length} pending`),
+          h(Button, { disabled: !items.length || busyIngest, onClick: processInbox }, busyIngest ? "Processing…" : "Process Inbox"),
+        ),
       ),
       error ? h(ErrorState, { title: "Inbox update failed", message: error, onRetry: load }) : null,
+      notice ? h(Card, { className: "hermes-wiki-notice" }, h(CardContent, null, notice)) : null,
       items.length
         ? h(
             "section",
@@ -1191,6 +1581,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
     const [slug, ...pageParts] = parts;
     if (!pageParts.length) return { kind: "wiki" as const, slug };
     if (pageParts.length === 1 && pageParts[0] === "inbox") return { kind: "inbox" as const, slug };
+    if (pageParts.length === 1 && pageParts[0] === "health") return { kind: "health" as const, slug };
+    if (pageParts.length === 1 && pageParts[0] === "log") return { kind: "activity" as const, slug };
     return { kind: "page" as const, slug, pageId: pageParts.join("/") };
   }
 
@@ -1215,6 +1607,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
     if (route.kind === "search") return h(SearchRoute, { key: `search-${route.query}-${route.scope}`, query: route.query, scope: route.scope });
     if (route.kind === "wiki") return h(WikiRoute, { key: `wiki-${route.slug}`, slug: route.slug });
     if (route.kind === "inbox") return h(InboxRoute, { key: `inbox-${route.slug}`, slug: route.slug });
+    if (route.kind === "health") return h(HealthRoute, { key: `health-${route.slug}`, slug: route.slug });
+    if (route.kind === "activity") return h(ActivityRoute, { key: `activity-${route.slug}`, slug: route.slug });
     return h(PageRoute, { key: `page-${route.slug}-${route.pageId}`, slug: route.slug, pageId: route.pageId });
   }
 
