@@ -16,6 +16,7 @@ from typing import Protocol
 from urllib.parse import urlparse
 
 from hermes_wiki import db, git_ops, projection
+from hermes_wiki.classifiers import classify_source as _classify_source
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown, write_markdown
 from hermes_wiki.management import (
     NOT_FOUND_OR_NOT_VISIBLE,
@@ -157,7 +158,7 @@ def ingest_source(
     source = _read_source(source_ref)
     if len(source.content) > MAX_INGEST_BYTES:
         raise IngestError("oversized source exceeds the 50MB Phase 1 ingest cap")
-    label = classify_source(source.name, source.content)
+    label = classify_source(source.name, source.content, wiki_root=resolved.path)
     digest = hashlib.sha256(source.content).hexdigest()
     now = _utc_now()
     today = now[:10]
@@ -359,22 +360,15 @@ def _materialize_ingest(
     )
 
 
-def classify_source(name: str, content: bytes) -> ClassLabel:
-    """Deterministically classify a Source Snapshot using built-in rules."""
+def classify_source(
+    name: str,
+    content: bytes,
+    *,
+    wiki_root: Path | None = None,
+) -> ClassLabel:
+    """Deterministically classify a Source Snapshot through the classifier chain."""
 
-    suffix = Path(name).suffix.lower()
-    text = _decode_text(content)
-    lowered = text.lower()
-    if suffix == ".pdf" or ("doi:" in lowered and "abstract" in lowered):
-        return ClassLabel("paper", "medium", "academic structure")
-    if re.search(r"(?m)^(speaker\s+\d+|[A-Z][A-Za-z ._-]{1,30}):\s+", text):
-        return ClassLabel("transcript", "medium", "speaker labels")
-    if suffix in {".md", ".markdown", ".html", ".htm", ".txt"} or re.search(
-        r"(?i)<article|<html|^#\s+|\bblog\b",
-        text,
-    ):
-        return ClassLabel("article", "medium", "markdown/html article")
-    return ClassLabel("unknown", "low", "fallback")
+    return _classify_source(name, content, wiki_root=wiki_root)
 
 
 @dataclass(frozen=True, slots=True)

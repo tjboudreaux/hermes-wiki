@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from fixtures.seed_data import SAMPLE_SOURCE_KINDS, sample_source_path
 from hermes_wiki import pipeline
 from hermes_wiki_cli.cli import main
 
@@ -60,6 +61,22 @@ def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
 
 def _latest_source_page(wiki_root: Path) -> Path:
     return sorted((wiki_root / "sources").glob("*.md"))[-1]
+
+
+def _latest_classified_as(wiki_root: Path) -> str:
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        row = conn.execute(
+            "SELECT classified_as FROM sources ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def _latest_source_path(wiki_root: Path) -> str:
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        row = conn.execute("SELECT source_path FROM sources ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert row is not None
+    return str(row[0])
 
 
 def test_cli_ingest_local_source_creates_pages_projection_log_and_git(
@@ -149,6 +166,145 @@ def test_cli_ingest_local_source_creates_pages_projection_log_and_git(
     assert "wiki.db" not in tracked
     assert "db_versions/manifest.jsonl" in tracked
     assert _git(wiki_root, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_builtin_classifiers_recognize_representative_fixtures() -> None:
+    """Representative fixtures map to the three built-ins plus the unknown fallback."""
+    expected = {
+        "article": "article",
+        "paper": "paper",
+        "transcript": "transcript",
+        "unknown": "unknown",
+    }
+    assert set(SAMPLE_SOURCE_KINDS) == set(expected)
+    for kind, label in expected.items():
+        path = sample_source_path(kind)
+        result = pipeline.classify_source(path.name, path.read_bytes())
+        assert result.name == label
+
+
+def test_classifier_tie_breaking_uses_declared_builtin_order() -> None:
+    """Ambiguous built-in matches resolve deterministically by declared order."""
+    ambiguous = b"\n".join(
+        [
+            b"# DOI Blog Clip",
+            b"",
+            b"Clipped article from a research blog.",
+            b"DOI: 10.5555/hermes.tie.001",
+            b"Abstract",
+            b"This academic-styled blog post intentionally resembles a paper.",
+            b"References",
+            b"[1] Fixture Research Desk.",
+        ]
+    )
+
+    labels = [pipeline.classify_source("doi-blog-clip.md", ambiguous).name for _ in range(5)]
+    assert labels == ["article"] * 5
+
+
+def test_cli_ingest_classifies_fixture_inputs_to_expected_raw_subdirs(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """CLI ingest records classified_as and stores snapshots in class-specific raw folders."""
+    expected_raw_subdirs = {
+        "article": "raw/articles/",
+        "paper": "raw/papers/",
+        "transcript": "raw/transcripts/",
+        "unknown": "raw/unknown/",
+    }
+    for kind, raw_prefix in expected_raw_subdirs.items():
+        wiki = f"{kind}-wiki"
+        assert _run_cli(tmp_path, "create", wiki, "--domain", f"{kind} fixtures") == 0
+        capsys.readouterr()
+
+        source = sample_source_path(kind)
+        assert _run_cli(tmp_path, "ingest", str(source), "--wiki", wiki) == 0
+        out = capsys.readouterr().out
+        assert f"class={kind}" in out
+
+        wiki_root = tmp_path / "wikis" / wiki
+        assert _latest_classified_as(wiki_root) == kind
+        assert _latest_source_path(wiki_root).startswith(raw_prefix)
+        assert (wiki_root / _latest_source_path(wiki_root)).is_file()
+
+
+def test_cli_classifier_selection_is_deterministic_for_same_input(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """The same ambiguous source yields the same class in independent wikis."""
+    ambiguous = tmp_path / "ambiguous-blog-paper.md"
+    ambiguous.write_text(
+        "\n".join(
+            [
+                "# Academic Blog Clip",
+                "",
+                "Clipped article from a blog about agent memory.",
+                "DOI: 10.5555/hermes.deterministic.001",
+                "Abstract",
+                "This post has paper-like structure but remains clipped blog Markdown.",
+                "References",
+                "[1] Fixture Research Desk.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    labels: list[str] = []
+    for index in range(2):
+        wiki = f"deterministic-{index}"
+        assert _run_cli(tmp_path, "create", wiki) == 0
+        assert _run_cli(tmp_path, "ingest", str(ambiguous), "--wiki", wiki) == 0
+        labels.append(_latest_classified_as(tmp_path / "wikis" / wiki))
+    capsys.readouterr()
+
+    assert labels == ["article", "article"]
+
+
+def test_trusted_custom_classifier_runs_only_after_builtins(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Built-ins win over trusted custom classifiers; custom runs only if built-ins abstain."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    plugin = wiki_root / "plugins" / "classifiers" / "catchall.py"
+    plugin.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "from hermes_wiki.models import ClassLabel",
+                "",
+                "def classify(path: Path):",
+                "    if path.read_bytes():",
+                "        return ClassLabel('custom-catchall', 'high', 'trusted custom')",
+                "    return None",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        _run_cli(
+            tmp_path,
+            "plugins",
+            "trust",
+            "classifier",
+            "catchall",
+            "--wiki",
+            "ai-tooling",
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    article = sample_source_path("article")
+    assert _run_cli(tmp_path, "ingest", str(article), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "article"
+
+    unknown = sample_source_path("unknown")
+    assert _run_cli(tmp_path, "ingest", str(unknown), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "custom-catchall"
 
 
 def test_ingest_cross_links_existing_page_and_increments_inbound_links(tmp_path: Path) -> None:
