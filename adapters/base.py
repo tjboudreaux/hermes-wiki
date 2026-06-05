@@ -29,6 +29,7 @@ class MonitorJob:
     name: str
     schedule: str
     prompt: str
+    skills: Sequence[str] = field(default_factory=tuple)
     env: Mapping[str, str] = field(default_factory=dict)
     enabled: bool = True
     origin: Mapping[str, Any] = field(default_factory=dict)
@@ -42,6 +43,8 @@ class CronReconcileResult:
     updated: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -107,7 +110,12 @@ class KanbanReader(Protocol):
 class CronAdapter(Protocol):
     """Cron seam for idempotently reconciling Wiki monitor jobs."""
 
-    def reconcile(self, jobs: Sequence[MonitorJob]) -> CronReconcileResult:
+    def reconcile(
+        self,
+        jobs: Sequence[MonitorJob],
+        *,
+        owner_prefix: str | None = None,
+    ) -> CronReconcileResult:
         """Create/update/remove wiki-owned jobs to match ``jobs``."""
 
     def list_jobs(self, *, include_disabled: bool = False) -> Sequence[Mapping[str, Any]]:

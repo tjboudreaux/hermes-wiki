@@ -373,6 +373,56 @@ def test_wiki_create_page_writes_attributed_page_index_projection_and_commit(
         )
 
 
+def test_wiki_create_page_under_cron_env_uses_cron_attribution(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    fixture = _use_fixture_home(monkeypatch, tmp_path)
+    from hermes_wiki import db
+    from hermes_wiki.frontmatter import read_markdown
+    from hermes_wiki.tools import _check_wiki_write_mode, wiki_create_page
+
+    job_name = "wiki:ai-tooling:weekly-arxiv-sweep"
+    monkeypatch.setenv("HERMES_WIKI", fixture.primary_slug)
+    monkeypatch.setenv("HERMES_CRON_JOB", job_name)
+    monkeypatch.delenv("HERMES_MODEL", raising=False)
+
+    assert _check_wiki_write_mode(fixture.primary_slug)
+    assert not _check_wiki_write_mode(fixture.private_slug)
+
+    result = _mapping(
+        wiki_create_page(
+            title="Cron Notes",
+            body="# Cron Notes\n\nCron-authored synthesis.",
+            type="concept",
+            tags=["cron"],
+            sources=[],
+            wiki=fixture.primary_slug,
+        )
+    )
+
+    assert result["author"] == f"cron:{job_name}"
+    assert result["author_kind"] == "cron"
+    page_path = fixture.primary_wiki_root / "concepts" / "cron-notes.md"
+    frontmatter, _body = read_markdown(page_path)
+    assert frontmatter["author"] == f"cron:{job_name}"
+    assert frontmatter["author_kind"] == "cron"
+    with db.connect_wiki(fixture.primary_wiki_db) as conn:
+        page = db.get_page(conn, "concepts/cron-notes")
+        assert page is not None
+        assert page["author"] == f"cron:{job_name}"
+        assert page["author_kind"] == "cron"
+    assert f"| create-page | concepts/cron-notes | cron:{job_name} | cron |" in (
+        fixture.primary_wiki_root / "log.md"
+    ).read_text(encoding="utf-8")
+    git_log = subprocess.run(
+        ["git", "-C", str(fixture.primary_wiki_root), "log", "-1", "--pretty=%s"],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert f"wiki: create-page concepts/cron-notes [cron:{job_name}]" in git_log
+
+
 def test_wiki_link_kanban_updates_wiki_side_only(monkeypatch: Any, tmp_path: Path) -> None:
     fixture = _use_fixture_home(monkeypatch, tmp_path)
     from hermes_wiki import db

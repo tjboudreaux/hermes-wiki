@@ -239,7 +239,6 @@ class HermesCronAdapter:
     def _origin(job: MonitorJob) -> dict[str, Any]:
         return {
             "source": "hermes-wiki",
-            "name": job.name,
             "env": dict(job.env),
         } | dict(job.origin)
 
@@ -254,28 +253,60 @@ class HermesCronAdapter:
             and origin.get("source") == "hermes-wiki"
         )
 
-    def reconcile(self, jobs: Sequence[MonitorJob]) -> CronReconcileResult:
+    def reconcile(
+        self,
+        jobs: Sequence[MonitorJob],
+        *,
+        owner_prefix: str | None = None,
+    ) -> CronReconcileResult:
         desired = {job.name: job for job in jobs}
-        existing = {
+        all_existing = {
             job["name"]: job
             for job in self.module.list_jobs(include_disabled=True)
-            if isinstance(job.get("name"), str) and self._is_wiki_job(job)
+            if isinstance(job.get("name"), str)
+        }
+        existing = {
+            name: job
+            for name, job in all_existing.items()
+            if self._is_wiki_job(job)
+            and (owner_prefix is None or str(name).startswith(owner_prefix))
         }
         created: list[str] = []
         updated: list[str] = []
         removed: list[str] = []
         unchanged: list[str] = []
+        failed: list[str] = []
+        errors: list[str] = []
 
         for name, desired_job in desired.items():
+            try:
+                self.module.parse_schedule(desired_job.schedule)
+            except ValueError as exc:
+                failed.append(name)
+                errors.append(f"invalid schedule for {name}: {exc}")
+                continue
             current = existing.get(name)
             origin = self._origin(desired_job)
             if current is None:
-                self.module.create_job(
+                foreign = all_existing.get(name)
+                if foreign is not None and not self._is_wiki_job(foreign):
+                    failed.append(name)
+                    errors.append(f"collision: {name}")
+                    continue
+                created_job = self.module.create_job(
                     desired_job.prompt,
                     desired_job.schedule,
                     name=name,
                     origin=origin,
+                    skills=list(desired_job.skills),
                     enabled_toolsets=["wiki"],
+                )
+                self.module.update_job(
+                    str(created_job["id"]),
+                    {
+                        "env": dict(desired_job.env),
+                        "origin": origin,
+                    },
                 )
                 created.append(name)
                 continue
@@ -285,6 +316,10 @@ class HermesCronAdapter:
                 updates["prompt"] = desired_job.prompt
             if current.get("schedule_display") != desired_job.schedule:
                 updates["schedule"] = desired_job.schedule
+            if list(current.get("skills") or []) != list(desired_job.skills):
+                updates["skills"] = list(desired_job.skills)
+            if current.get("env") != dict(desired_job.env):
+                updates["env"] = dict(desired_job.env)
             if current.get("origin") != origin:
                 updates["origin"] = origin
             if bool(current.get("enabled", True)) != desired_job.enabled:
@@ -305,6 +340,8 @@ class HermesCronAdapter:
             updated=updated,
             removed=removed,
             unchanged=unchanged,
+            failed=failed,
+            errors=errors,
         )
 
     def list_jobs(self, *, include_disabled: bool = False) -> Sequence[Mapping[str, Any]]:

@@ -25,7 +25,7 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
-from hermes_wiki.monitors import MonitorError, define_monitor
+from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
@@ -244,6 +244,22 @@ def wiki_command(args: argparse.Namespace) -> int:
                 )
             return 0
         if verb == "monitor":
+            if args.setup:
+                result = setup_monitors(
+                    wiki=args.wiki,
+                    profile=args.profile,
+                    confirm=args.yes,
+                )
+                print(f"Reconciled monitors for wiki={result.wiki}")
+                for field in ("created", "updated", "removed", "unchanged", "failed"):
+                    for name in getattr(result.cron, field):
+                        print(f"{field}: {name}")
+                for message in result.cron.errors:
+                    print(message, file=sys.stderr)
+                return 0 if result.ok else 1
+            if not args.source:
+                print("monitor requires --source unless --setup is used", file=sys.stderr)
+                return 1
             result = define_monitor(
                 source=args.source,
                 wiki=args.wiki,
@@ -462,7 +478,18 @@ def _add_management_subcommands(
     )
     monitor.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
     monitor.add_argument("--profile", help="Profile for current-wiki resolution")
-    monitor.add_argument("--source", choices=("arxiv", "rss", "x"), required=True)
+    monitor.add_argument("--source", choices=("arxiv", "rss", "x"))
+    monitor.add_argument(
+        "--setup",
+        action="store_true",
+        help="Reconcile stored Monitor definitions into isolated Hermes cron",
+    )
+    monitor.add_argument(
+        "--yes",
+        "--confirm",
+        action="store_true",
+        help="Confirm cron reconcile writes",
+    )
     monitor.add_argument("--name", help="Monitor name to create/update (defaults by source)")
     monitor.add_argument("--schedule", help="Cron schedule stored with the portable definition")
     monitor.add_argument("--prompt", help="Prompt payload stored with the portable definition")

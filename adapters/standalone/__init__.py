@@ -7,6 +7,7 @@ import os
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -284,39 +285,89 @@ class StandaloneCronAdapter:
         self._store_path.parent.mkdir(parents=True, exist_ok=True)
         self._store_path.write_text(json.dumps(jobs, indent=2, sort_keys=True), encoding="utf-8")
 
-    def reconcile(self, jobs: Sequence[MonitorJob]) -> CronReconcileResult:
-        existing = self._load()
-        desired = {
-            job.name: {
-                **asdict(job),
-                "env": dict(job.env),
-                "origin": dict(job.origin),
-            }
-            for job in jobs
+    @staticmethod
+    def _origin(job: MonitorJob) -> dict[str, Any]:
+        return {
+            "source": "hermes-wiki",
+            **dict(job.origin),
         }
+
+    @staticmethod
+    def _is_wiki_owned(job: Mapping[str, Any], *, owner_prefix: str | None) -> bool:
+        name = job.get("name")
+        origin = job.get("origin")
+        if not isinstance(name, str) or not isinstance(origin, Mapping):
+            return False
+        if origin.get("source") != "hermes-wiki":
+            return False
+        return owner_prefix is None or name.startswith(owner_prefix)
+
+    def _job_record(self, job: MonitorJob) -> dict[str, Any]:
+        parsed = _parse_standalone_schedule(job.schedule)
+        return {
+            **asdict(job),
+            "skills": [str(skill) for skill in job.skills],
+            "env": dict(job.env),
+            "origin": self._origin(job),
+            "schedule_display": parsed["display"],
+            "parsed_schedule": parsed,
+            "next_run_at": _compute_standalone_next_run(parsed),
+        }
+
+    def reconcile(
+        self,
+        jobs: Sequence[MonitorJob],
+        *,
+        owner_prefix: str | None = None,
+    ) -> CronReconcileResult:
+        existing = self._load()
+        desired: dict[str, dict[str, Any]] = {}
         created: list[str] = []
         updated: list[str] = []
         removed: list[str] = []
         unchanged: list[str] = []
+        failed: list[str] = []
+        errors: list[str] = []
+
+        for job in jobs:
+            try:
+                desired[job.name] = self._job_record(job)
+            except ValueError as exc:
+                failed.append(job.name)
+                errors.append(f"invalid schedule for {job.name}: {exc}")
+
+        next_jobs: dict[str, dict[str, Any]] = {name: dict(job) for name, job in existing.items()}
 
         for name, desired_job in desired.items():
             current = existing.get(name)
             if current is None:
+                next_jobs[name] = desired_job
                 created.append(name)
+            elif not self._is_wiki_owned(current, owner_prefix=owner_prefix):
+                failed.append(name)
+                errors.append(f"collision: {name}")
             elif current != desired_job:
+                next_jobs[name] = desired_job
                 updated.append(name)
             else:
                 unchanged.append(name)
-        for name in existing:
-            if name not in desired:
+
+        for name, current in existing.items():
+            if (
+                name not in desired
+                and self._is_wiki_owned(current, owner_prefix=owner_prefix)
+            ):
+                next_jobs.pop(name, None)
                 removed.append(name)
 
-        self._save(desired)
+        self._save(next_jobs)
         return CronReconcileResult(
             created=created,
             updated=updated,
             removed=removed,
             unchanged=unchanged,
+            failed=failed,
+            errors=errors,
         )
 
     def list_jobs(self, *, include_disabled: bool = False) -> Sequence[Mapping[str, Any]]:
@@ -324,6 +375,80 @@ class StandaloneCronAdapter:
         if not include_disabled:
             jobs = [job for job in jobs if job.get("enabled", True)]
         return jobs
+
+
+def _parse_standalone_schedule(schedule: str) -> dict[str, str]:
+    parts = str(schedule).strip().split()
+    if len(parts) != 5:
+        raise ValueError(f"Invalid schedule {schedule!r}; expected five cron fields")
+    minute, hour, day_of_month, month, day_of_week = parts
+    _validate_cron_field(minute, minimum=0, maximum=59, field="minute")
+    _validate_cron_field(hour, minimum=0, maximum=23, field="hour")
+    _validate_cron_field(day_of_month, minimum=1, maximum=31, field="day_of_month")
+    _validate_cron_field(month, minimum=1, maximum=12, field="month")
+    _validate_cron_field(day_of_week, minimum=0, maximum=7, field="day_of_week")
+    return {
+        "kind": "cron",
+        "minute": minute,
+        "hour": hour,
+        "day_of_month": day_of_month,
+        "month": month,
+        "day_of_week": day_of_week,
+        "display": " ".join(parts),
+    }
+
+
+def _validate_cron_field(value: str, *, minimum: int, maximum: int, field: str) -> None:
+    for part in value.split(","):
+        base = part
+        if "/" in base:
+            base, step = base.split("/", 1)
+            if not step.isdigit() or int(step) <= 0:
+                raise ValueError(f"{field} has invalid step {part!r}")
+        if base == "*":
+            continue
+        if "-" in base:
+            start, end = base.split("-", 1)
+            if not start.isdigit() or not end.isdigit():
+                raise ValueError(f"{field} has invalid range {part!r}")
+            if not (minimum <= int(start) <= int(end) <= maximum):
+                raise ValueError(f"{field} range {part!r} is out of bounds")
+            continue
+        if not base.isdigit() or not (minimum <= int(base) <= maximum):
+            raise ValueError(f"{field} value {part!r} is out of bounds")
+
+
+def _compute_standalone_next_run(parsed: Mapping[str, str]) -> str | None:
+    minute = parsed.get("minute")
+    hour = parsed.get("hour")
+    if not (minute and hour and minute.isdigit() and hour.isdigit()):
+        return None
+    day_of_week = parsed.get("day_of_week") or "*"
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    candidate = now + timedelta(minutes=1)
+    for _ in range(60 * 24 * 366):
+        if (
+            candidate.minute == int(minute)
+            and candidate.hour == int(hour)
+            and _cron_day_matches(candidate, day_of_week)
+        ):
+            return candidate.isoformat().replace("+00:00", "Z")
+        candidate += timedelta(minutes=1)
+    return None
+
+
+def _cron_day_matches(candidate: datetime, day_of_week: str) -> bool:
+    if day_of_week == "*":
+        return True
+    cron_weekday = (candidate.weekday() + 1) % 7
+    for part in day_of_week.split(","):
+        if part.isdigit():
+            value = int(part)
+            if value == 7:
+                value = 0
+            if cron_weekday == value:
+                return True
+    return False
 
 
 class StandaloneDashboardLoader:

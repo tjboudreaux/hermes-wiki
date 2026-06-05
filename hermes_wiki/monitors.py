@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from adapters.base import CronReconcileResult, MonitorJob, create_adapters
 from hermes_wiki import git_ops
 from hermes_wiki.attribution import append_log_entry, resolve_actor, utc_now
 from hermes_wiki.management import (
@@ -54,6 +55,20 @@ class DefineMonitorResult:
     definition: MonitorDefinition
     created: bool
     commit_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SetupMonitorResult:
+    """Result returned after reconciling portable Monitor definitions into cron."""
+
+    wiki: str
+    path: Path
+    jobs: tuple[MonitorJob, ...]
+    cron: CronReconcileResult
+
+    @property
+    def ok(self) -> bool:
+        return not self.cron.failed and not self.cron.errors
 
 
 def define_monitor(
@@ -122,6 +137,45 @@ def define_monitor(
         definition=definition,
         created=created,
         commit_id=commit.commit_id,
+    )
+
+
+def setup_monitors(
+    *,
+    wiki: str | None = None,
+    profile: str | None = None,
+    confirm: bool = False,
+) -> SetupMonitorResult:
+    """Reconcile a wiki's desired Monitor definitions into the cron seam.
+
+    ``confirm`` is deliberately required because this writes scheduler state.
+    The reconcile is scoped to ``wiki:<slug>:`` and leaves unrelated cron jobs
+    untouched.
+    """
+
+    if not confirm:
+        raise MonitorError(
+            "confirmation required: rerun with --yes to reconcile monitors into cron"
+        )
+    try:
+        resolved = ensure_wiki_mutable(slug=wiki, profile=profile)
+    except WikiManagementError as exc:
+        raise MonitorError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+    jobs = tuple(
+        _monitor_job_from_record(resolved.slug, record)
+        for record in read_schema_monitor_records(resolved.path)
+        if bool(record.get("enabled", True))
+    )
+    cron_result = create_adapters().cron.reconcile(
+        jobs,
+        owner_prefix=f"wiki:{resolved.slug}:",
+    )
+    return SetupMonitorResult(
+        wiki=resolved.slug,
+        path=resolved.path,
+        jobs=jobs,
+        cron=cron_result,
     )
 
 
@@ -233,6 +287,29 @@ def _normalize_record(record: dict[str, Any], *, marker_name: str) -> dict[str, 
     }
 
 
+def _monitor_job_from_record(slug: str, record: dict[str, Any]) -> MonitorJob:
+    monitor_name = _validate_name(str(record.get("name") or ""))
+    source = _validate_source(str(record.get("source") or ""))
+    env = {str(key): str(value) for key, value in dict(record.get("env") or {}).items()}
+    env["HERMES_WIKI"] = slug
+    skills = record.get("skills")
+    if not isinstance(skills, list) or not skills:
+        skills = ["wiki-ingest"]
+    return MonitorJob(
+        name=f"wiki:{slug}:{monitor_name}",
+        schedule=_one_line(str(record.get("schedule") or ""), "schedule"),
+        prompt=_one_line(str(record.get("prompt") or ""), "prompt"),
+        skills=tuple(str(skill) for skill in skills),
+        env=env,
+        enabled=bool(record.get("enabled", True)),
+        origin={
+            "wiki_slug": slug,
+            "monitor_name": monitor_name,
+            "source_kind": source,
+        },
+    )
+
+
 def _default_name(source: str) -> str:
     if source == "arxiv":
         return "weekly-arxiv-sweep"
@@ -304,6 +381,8 @@ __all__ = [
     "DefineMonitorResult",
     "MonitorDefinition",
     "MonitorError",
+    "SetupMonitorResult",
     "define_monitor",
     "read_schema_monitor_records",
+    "setup_monitors",
 ]

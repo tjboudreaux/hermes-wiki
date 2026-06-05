@@ -227,8 +227,9 @@ def wiki_ingest(
     if bool(path_or_url) == bool(inbox):
         return "wiki_ingest requires exactly one of path_or_url or inbox=True"
     try:
+        author, author_kind = _tool_actor()
         if inbox:
-            results = ingest_inbox(wiki=slug, author=_agent_author(), author_kind="agent")
+            results = ingest_inbox(wiki=slug, author=author, author_kind=author_kind)
             return [_ingest_result_row(result) for result in results]
         if path_or_url is None:
             return "wiki_ingest requires path_or_url"
@@ -236,8 +237,8 @@ def wiki_ingest(
             ingest_source(
                 path_or_url,
                 wiki=slug,
-                author=_agent_author(),
-                author_kind="agent",
+                author=author,
+                author_kind=author_kind,
                 classifier=classifier,
             )
         )
@@ -263,6 +264,7 @@ def wiki_create_page(
     if not _check_wiki_write_mode(slug):
         return WRITE_PERMISSION_DENIED
     try:
+        author, author_kind = _tool_actor()
         return _create_or_update_page(
             wiki_root,
             wiki=slug,
@@ -271,8 +273,8 @@ def wiki_create_page(
             page_type=type,
             tags=tags or (),
             sources=sources or (),
-            author=_agent_author(),
-            author_kind="agent",
+            author=author,
+            author_kind=author_kind,
         )
     except WikiNavigationError as exc:
         return str(exc)
@@ -294,12 +296,13 @@ def wiki_link_kanban(
         return WRITE_PERMISSION_DENIED
     try:
         del wiki_root
+        author, author_kind = _tool_actor()
         return link_page_to_task(
             page_id=page_id,
             task_id=task_id,
             wiki=slug,
-            author=_agent_author(),
-            author_kind="agent",
+            author=author,
+            author_kind=author_kind,
         ).to_row()
     except (WikiNavigationError, KanbanLinkError) as exc:
         return str(exc)
@@ -631,8 +634,8 @@ def _tool_schema(name: str) -> dict[str, Any]:
     }
 
 
-def _agent_author() -> str:
-    return resolve_actor(author_kind="agent")[0]
+def _tool_actor() -> tuple[str, str]:
+    return resolve_actor()
 
 
 def _utc_now() -> str:
