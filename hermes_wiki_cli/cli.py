@@ -8,18 +8,21 @@ from collections.abc import Sequence
 from typing import Any
 
 from hermes_wiki import __version__
+from hermes_wiki.attribution import list_log_entries, resolve_actor
 from hermes_wiki.management import (
     WikiManagementError,
     archive_wiki,
     create_wiki,
     current_profile,
+    ensure_wiki_mutable,
     list_visible_wikis,
     show_wiki,
     switch_wiki,
 )
-from hermes_wiki.navigation import list_wiki_pages, open_wiki_page
+from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
+from hermes_wiki.tools import _create_or_update_page
 
 
 def build_parser(
@@ -156,6 +159,25 @@ def wiki_command(args: argparse.Namespace) -> int:
                 tag_text = ",".join(str(tag) for tag in tags)
                 print(f"{row['id']}: {row['title']} type={row['type']} tags={tag_text}")
             return 0
+        if verb == "create-page":
+            actor, actor_kind = resolve_actor(author=args.author, author_kind=args.author_kind)
+            resolved = ensure_wiki_mutable(slug=args.wiki, profile=args.profile)
+            result = _create_or_update_page(
+                resolved.path,
+                wiki=resolved.slug,
+                title=args.title,
+                body=args.body,
+                page_type=args.page_type,
+                tags=args.tags or (),
+                sources=args.sources or (),
+                author=actor,
+                author_kind=actor_kind,
+            )
+            print(
+                f"{result['id']} author={result['author']} "
+                f"author_kind={result['author_kind']}"
+            )
+            return 0
         if verb == "inbox":
             rows = list_inbox(wiki=args.wiki)
             if not rows:
@@ -163,6 +185,9 @@ def wiki_command(args: argparse.Namespace) -> int:
                 return 0
             for row in rows:
                 print(f"{row['name']}: {row['status']} ({row['path']})")
+            return 0
+        if verb == "log":
+            _print_activity_log(args)
             return 0
         if verb == "plugins":
             from hermes_wiki.trust import TrustError, list_plugins, trust_plugin, untrust_plugin
@@ -212,7 +237,7 @@ def wiki_command(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-    except (WikiManagementError, IngestError) as exc:
+    except (WikiManagementError, IngestError, WikiNavigationError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     raise AssertionError(f"unhandled wiki command: {verb}")
@@ -311,8 +336,36 @@ def _add_management_subcommands(
     list_pages.add_argument("--type", dest="page_type", help="Filter by page type")
     list_pages.add_argument("--tag", dest="tag", help="Filter by tag")
 
+    create_page = subparsers.add_parser("create-page", help="Create or update a Wiki Page")
+    create_page.add_argument("title", help="Page title")
+    create_page.add_argument("--body", required=True, help="Markdown body for the page")
+    create_page.add_argument("--type", dest="page_type", default="concept", help="Wiki Page type")
+    create_page.add_argument("--tag", dest="tags", action="append", help="Tag to add")
+    create_page.add_argument("--source", dest="sources", action="append", help="Source id/path")
+    create_page.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    create_page.add_argument("--profile", help="Profile for current-wiki resolution")
+    create_page.add_argument("--author", help="Override the acting author for attribution")
+    create_page.add_argument(
+        "--author-kind",
+        choices=("agent", "profile", "human", "cron"),
+        help="Override inferred author kind",
+    )
+
     inbox = subparsers.add_parser("inbox", help="List unprocessed inbox files")
     inbox.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+
+    log = subparsers.add_parser("log", help="List attributed Wiki actions")
+    log.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    log.add_argument("--profile", help="Profile for current-wiki resolution")
+    log.add_argument("--author", help="Filter to one exact author")
+    log.add_argument(
+        "--kind",
+        choices=("agent", "profile", "human", "cron"),
+        help="Filter author kind",
+    )
+    log.add_argument("--page", dest="page_id", help="Filter to one page id")
+    log.add_argument("--limit", type=int, default=50, help="Maximum rows to print")
+    log.add_argument("--offset", type=int, default=0, help="Rows to skip before printing")
 
     plugins = subparsers.add_parser("plugins", help="List and trust custom plugins")
     plugin_subparsers = plugins.add_subparsers(dest="plugins_command")
@@ -352,6 +405,26 @@ def _print_wiki_summary(args: argparse.Namespace) -> None:
     print(f"health: {float(row.get('health_score') or 0):.2f}")
     print(f"archived: {'yes' if int(row.get('archived') or 0) else 'no'}")
     print(f"path: {row.get('path')}")
+
+
+def _print_activity_log(args: argparse.Namespace) -> None:
+    row = show_wiki(slug=args.wiki, profile=args.profile)
+    entries = list_log_entries(
+        row["path"],
+        author=args.author,
+        author_kind=args.kind,
+        page_id=args.page_id,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    if not entries:
+        print("No log entries.")
+        return
+    for entry in entries:
+        print(
+            f"{entry.timestamp} {entry.author_kind} {entry.author} "
+            f"{entry.action} {entry.target} {entry.details}".rstrip()
+        )
 
 
 def _format_summary_line(row: dict[str, Any], *, include_status: bool) -> str:

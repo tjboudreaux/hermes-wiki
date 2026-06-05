@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from hermes_wiki import db, git_ops, projection
+from hermes_wiki.attribution import append_log_entry
 from hermes_wiki.classifiers import BUILTIN_CLASSIFIERS
 from hermes_wiki.management import (
     NOT_FOUND_OR_NOT_VISIBLE,
@@ -358,17 +359,15 @@ def _append_trust_log(
     author: str,
     trusted_at: str,
 ) -> None:
-    details = {
-        "kind": kind,
-        "name": name,
-    }
-    import json
-
-    with (wiki_root / "log.md").open("a", encoding="utf-8") as handle:
-        handle.write(
-            f"| {trusted_at} | {action} | {kind} {name} | {author} | human | "
-            f"{json.dumps(details, separators=(',', ':'), sort_keys=True)} |\n"
-        )
+    append_log_entry(
+        wiki_root,
+        timestamp=trusted_at,
+        action=action,
+        target=f"{kind} {name}",
+        author=author,
+        author_kind="human",
+        details={"kind": kind, "name": name},
+    )
 
 
 def _validate_kind(kind: str) -> str:

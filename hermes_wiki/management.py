@@ -14,6 +14,7 @@ from typing import Any
 from adapters.base import HomeResolver, create_adapters
 from hermes_wiki import db, git_ops, projection, templates
 from hermes_wiki._validators import ValidationError, validate_profile, validate_slug
+from hermes_wiki.attribution import append_log_entry, resolve_actor
 from hermes_wiki.home import ResolvedWiki, WikiResolutionError, resolve_home, resolve_wiki
 
 NOT_FOUND_OR_NOT_VISIBLE = "not found or not visible"
@@ -55,7 +56,7 @@ def create_wiki(
     """Create a new wiki root, registry row, initial projection, and git commit."""
 
     clean_slug = _validate_slug_for_management(slug)
-    acting_author = resolved_author(author)
+    acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
     home = resolve_home(home_resolver)
     wikis_dir = home / "wikis"
     wiki_root = wikis_dir / clean_slug
@@ -71,13 +72,13 @@ def create_wiki(
             slug=clean_slug,
             domain=domain,
             author=acting_author,
-            author_kind=author_kind,
+            author_kind=acting_kind,
         )
         projection_result = projection.rebuild_projection(
             wiki_root,
             rebuild_reason="initial",
             author=acting_author,
-            author_kind=author_kind,
+            author_kind=acting_kind,
         )
         if projection_result.status != "active":
             raise WikiManagementError(
@@ -252,9 +253,7 @@ def current_profile(profile: str | None = None) -> str:
 def resolved_author(author: str | None = None) -> str:
     """Return the acting author for human CLI mutations."""
 
-    if author is not None and author.strip():
-        return _one_line(author, "author")
-    return _one_line(os.environ.get("USER") or "unknown", "author")
+    return resolve_actor(author=author, author_kind="human")[0]
 
 
 def _registry_connection(home: Path, *, create: bool) -> sqlite3.Connection:
@@ -362,14 +361,16 @@ def _append_management_log(
     target: str,
     author: str,
 ) -> None:
-    log_path = wiki_root / "log.md"
     timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    row = (
-        f"| {timestamp} | {action} | {target} | {author} | human | "
-        f"Wiki management action `{action}`. |\n"
+    append_log_entry(
+        wiki_root,
+        timestamp=timestamp,
+        action=action,
+        target=target,
+        author=author,
+        author_kind="human",
+        details=f"Wiki management action `{action}`.",
     )
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(row)
 
 
 def _validate_slug_for_management(slug: str) -> str:

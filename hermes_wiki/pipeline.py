@@ -22,13 +22,13 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from hermes_wiki import db, git_ops, projection
+from hermes_wiki.attribution import append_log_entry, record_change, resolve_actor
 from hermes_wiki.classifiers import classify_source as _classify_source
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown, write_markdown
 from hermes_wiki.management import (
     NOT_FOUND_OR_NOT_VISIBLE,
     WikiManagementError,
     ensure_wiki_mutable,
-    resolved_author,
 )
 from hermes_wiki.models import ClassLabel, WikiPage
 
@@ -180,7 +180,7 @@ def ingest_source(
     *,
     wiki: str | None = None,
     author: str | None = None,
-    author_kind: str = "human",
+    author_kind: str | None = None,
     classifier: str | None = None,
     processor: Processor | None = None,
 ) -> IngestResult:
@@ -191,7 +191,7 @@ def ingest_source(
     except WikiManagementError as exc:
         raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
-    acting_author = resolved_author(author)
+    acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
     source = _read_source(source_ref)
     wiki_root = resolved.path
     if len(source.content) > MAX_INGEST_BYTES:
@@ -201,7 +201,7 @@ def ingest_source(
             status="oversized",
             classified_as="oversized",
             author=acting_author,
-            author_kind=author_kind,
+            author_kind=acting_kind,
         )
         raise IngestError("oversized source exceeds the 50MB Phase 1 ingest cap")
     return _ingest_source_content(
@@ -210,7 +210,7 @@ def ingest_source(
         wiki_slug=resolved.slug,
         wiki_root=wiki_root,
         author=acting_author,
-        author_kind=author_kind,
+        author_kind=acting_kind,
         processor=processor,
         remove_source_path=None,
         preclassified_label=_forced_label(classifier),
@@ -221,7 +221,7 @@ def ingest_inbox(
     *,
     wiki: str | None = None,
     author: str | None = None,
-    author_kind: str = "human",
+    author_kind: str | None = None,
     processor: Processor | None = None,
 ) -> list[IngestResult]:
     """Explicitly process the pending inbox for one Wiki.
@@ -235,7 +235,7 @@ def ingest_inbox(
     except WikiManagementError as exc:
         raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
-    acting_author = resolved_author(author)
+    acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
     inbox = resolved.path / "raw" / "inbox"
     if not inbox.exists():
         return []
@@ -250,7 +250,7 @@ def ingest_inbox(
                 status="oversized",
                 classified_as="oversized",
                 author=acting_author,
-                author_kind=author_kind,
+                author_kind=acting_kind,
             )
             results.append(result)
             continue
@@ -262,7 +262,7 @@ def ingest_inbox(
                 status="unknown",
                 classified_as=label.name,
                 author=acting_author,
-                author_kind=author_kind,
+                author_kind=acting_kind,
             )
             results.append(result)
             continue
@@ -272,7 +272,7 @@ def ingest_inbox(
             wiki_slug=resolved.slug,
             wiki_root=resolved.path,
             author=acting_author,
-            author_kind=author_kind,
+            author_kind=acting_kind,
             processor=processor,
             remove_source_path=inbox_path,
             preclassified_label=label,
@@ -570,13 +570,15 @@ def _append_inbox_attempt_log(
     author: str,
     author_kind: str,
 ) -> None:
-    details = json.dumps(
-        {"source": source_ref, "status": status, "class": classified_as},
-        separators=(",", ":"),
-        sort_keys=True,
+    append_log_entry(
+        wiki_root,
+        timestamp=now,
+        action="inbox",
+        target=source_ref,
+        author=author,
+        author_kind=author_kind,
+        details={"source": source_ref, "status": status, "class": classified_as},
     )
-    with (wiki_root / "log.md").open("a", encoding="utf-8") as handle:
-        handle.write(f"| {now} | inbox | {source_ref} | {author} | {author_kind} | {details} |\n")
 
 
 def _materialize_ingest(
@@ -638,7 +640,7 @@ def _materialize_ingest(
         )
         pages_updated.extend(updated_existing)
         _rewrite_index(wiki_root)
-        _append_ingest_log(
+        _record_page_changes_for_ingest(
             wiki_root,
             now=now,
             source_ref=source.ref,
@@ -1122,7 +1124,7 @@ def _rewrite_index(wiki_root: Path) -> None:
     (wiki_root / "index.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _append_ingest_log(
+def _record_page_changes_for_ingest(
     wiki_root: Path,
     *,
     now: str,
@@ -1133,18 +1135,41 @@ def _append_ingest_log(
     author: str,
     author_kind: str,
 ) -> None:
-    details = json.dumps(
-        {
-            "source": source_ref,
-            "class": classified_as,
-            "pages_created": pages_created,
-            "pages_updated": pages_updated,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    with (wiki_root / "log.md").open("a", encoding="utf-8") as handle:
-        handle.write(f"| {now} | ingest | {source_ref} | {author} | {author_kind} | {details} |\n")
+    for change, page_ids in (
+        ("created", pages_created),
+        ("updated", list(dict.fromkeys(pages_updated))),
+    ):
+        for page_id in page_ids:
+            record_change(
+                wiki_root,
+                page_id=page_id,
+                action="ingest",
+                author=author,
+                author_kind=author_kind,
+                timestamp=now,
+                details={
+                    "source": source_ref,
+                    "class": classified_as,
+                    "change": change,
+                    "pages_created": pages_created,
+                    "pages_updated": list(dict.fromkeys(pages_updated)),
+                },
+            )
+    if not pages_created and not pages_updated:
+        append_log_entry(
+            wiki_root,
+            timestamp=now,
+            action="ingest",
+            target=source_ref,
+            author=author,
+            author_kind=author_kind,
+            details={
+                "source": source_ref,
+                "class": classified_as,
+                "pages_created": pages_created,
+                "pages_updated": pages_updated,
+            },
+        )
 
 
 def _existing_pages(wiki_root: Path) -> Iterable[ExistingPage]:

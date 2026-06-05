@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -12,6 +11,7 @@ from typing import Any
 
 from adapters.base import ToolRegistry, create_adapters
 from hermes_wiki import db, git_ops, projection
+from hermes_wiki.attribution import record_change, resolve_actor
 from hermes_wiki.classifiers import classify_source
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown, write_markdown
 from hermes_wiki.lint import ensure_projection_current, projection_findings
@@ -271,6 +271,7 @@ def wiki_create_page(
             tags=tags or (),
             sources=sources or (),
             author=_agent_author(),
+            author_kind="agent",
         )
     except WikiNavigationError as exc:
         return str(exc)
@@ -345,6 +346,7 @@ def _create_or_update_page(
     tags: Sequence[str],
     sources: Sequence[str],
     author: str,
+    author_kind: str,
 ) -> dict[str, Any]:
     clean_type = _clean_page_type(page_type)
     page_id = f"{_directory_for_page_type(clean_type)}/{_slugify(title)}"
@@ -368,7 +370,7 @@ def _create_or_update_page(
         "confidence": "medium",
         "contested": False,
         "author": author,
-        "author_kind": "agent",
+        "author_kind": author_kind,
         "links": [],
         "inbound_links": 0,
     }
@@ -377,19 +379,20 @@ def _create_or_update_page(
 
     write_markdown(page_path, metadata, body)
     _rewrite_index(wiki_root)
-    _append_tool_log(
+    record_change(
         wiki_root,
-        now=now,
+        timestamp=now,
         action="create-page",
-        target=page_id,
+        page_id=page_id,
         author=author,
+        author_kind=author_kind,
         details={"title": title, "type": clean_type},
     )
     rebuild = projection.rebuild_projection(
         wiki_root,
         rebuild_reason="manual",
         author=author,
-        author_kind="agent",
+        author_kind=author_kind,
     )
     if rebuild.status != "active":
         raise WikiNavigationError(f"projection rebuild failed: {rebuild.notes}")
@@ -408,7 +411,7 @@ def _create_or_update_page(
         "type": clean_type,
         "path": page_path.relative_to(wiki_root).as_posix(),
         "author": author,
-        "author_kind": "agent",
+        "author_kind": author_kind,
         "commit_id": commit.commit_id,
     }
 
@@ -454,12 +457,13 @@ def _link_kanban_ref(
     frontmatter["author"] = author
     frontmatter["author_kind"] = "agent"
     write_markdown(page_path, dict(frontmatter), body)
-    _append_tool_log(
+    record_change(
         wiki_root,
-        now=now,
+        timestamp=now,
         action="link-kanban",
-        target=clean_page_id,
+        page_id=clean_page_id,
         author=author,
+        author_kind="agent",
         details={"task_id": clean_task_id, "direction": "page->task"},
     )
     rebuild = projection.rebuild_projection(
@@ -536,20 +540,6 @@ def _rewrite_index(wiki_root: Path) -> None:
             lines.append(f"- [{title}]({page_id}.md) — `{page_id}`")
         lines.append("")
     (wiki_root / "index.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-
-
-def _append_tool_log(
-    wiki_root: Path,
-    *,
-    now: str,
-    action: str,
-    target: str,
-    author: str,
-    details: Mapping[str, Any],
-) -> None:
-    encoded = json.dumps(details, separators=(",", ":"), sort_keys=True)
-    with (wiki_root / "log.md").open("a", encoding="utf-8") as handle:
-        handle.write(f"| {now} | {action} | {target} | {author} | agent | {encoded} |\n")
 
 
 def _refresh_registry_counts(wiki_root: Path, *, wiki: str, updated: str) -> None:
@@ -732,7 +722,7 @@ def _tool_schema(name: str) -> dict[str, Any]:
 
 
 def _agent_author() -> str:
-    return os.environ.get("HERMES_MODEL") or os.environ.get("HERMES_AGENT_MODEL") or "agent"
+    return resolve_actor(author_kind="agent")[0]
 
 
 def _utc_now() -> str:

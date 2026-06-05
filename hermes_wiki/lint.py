@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes_wiki import db, git_ops, projection
+from hermes_wiki.attribution import history_block_in_body
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown
 from hermes_wiki.management import WikiManagementError, ensure_wiki_mutable, resolved_author
 from hermes_wiki.pipeline import INBOX_STATUS_REL, MAX_INGEST_BYTES
@@ -382,6 +383,16 @@ def _page_content_findings(
                     page_id=page["id"],
                     path=page["rel_path"],
                     lines=len(page["body"].splitlines()),
+                )
+            )
+        if history_block_in_body(page["body"]):
+            findings.append(
+                _finding(
+                    "history_in_body",
+                    "high",
+                    f"page {page['id']} embeds Page History in the body",
+                    page_id=page["id"],
+                    path=page["rel_path"],
                 )
             )
         if bool(page["metadata"].get("contested")):

@@ -220,6 +220,35 @@ def test_lint_reports_page_level_checks_with_correct_severities(
     )
 
 
+def test_lint_flags_embedded_page_history_blocks(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Page History belongs outside Wiki Page bodies and is linted if embedded."""
+
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    _write_page(
+        wiki_root,
+        "concepts/history-in-body",
+        body=(
+            "# History In Body\n\n"
+            "Knowledge content belongs here.\n\n"
+            "## Page History\n\n"
+            "- 2026-06-05 agent-alpha edited this page."
+        ),
+    )
+    _rewrite_index(wiki_root, ["concepts/history-in-body"])
+    _seed_projection(wiki_root, taxonomy=["agents"])
+    capsys.readouterr()
+
+    _code, report = _lint(tmp_path, capsys, "--wiki", "ai-tooling")
+    checks = _checks(report)
+
+    assert checks["history_in_body"][0]["severity"] == "high"
+    assert checks["history_in_body"][0]["page"] == "concepts/history-in-body"
+
+
 def test_lint_reports_storage_plugin_inbox_and_projection_checks(
     tmp_path: Path,
     capsys,
