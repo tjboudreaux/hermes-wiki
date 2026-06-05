@@ -17,7 +17,8 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
-from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox, search_wiki
+from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
+from hermes_wiki.search import search_wiki
 
 
 def build_parser(
@@ -138,7 +139,8 @@ def wiki_command(args: argparse.Namespace) -> int:
                 print("No results.")
                 return 0
             for row in rows:
-                print(f"{row['id']}: {row['title']} — {row.get('snippet') or ''}")
+                context = row.get("context") or row.get("snippet") or ""
+                print(f"{row['id']}: {row['title']} — {context}")
             return 0
         if verb == "inbox":
             rows = list_inbox(wiki=args.wiki)

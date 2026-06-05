@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from hermes_wiki.search import normalize_search_text as _normalize_search_text
+
 SCHEMA_VERSION = "1"
 
 JsonList = Sequence[str] | None
@@ -270,32 +272,10 @@ def _rows(
     ]
 
 
-_IDENTIFIER_SEPARATOR_RE = re.compile(r"[_\-/]+")
-_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
 def normalize_search_text(*parts: str | Sequence[str] | None) -> str:
     """Normalize technical terms while preserving originals for FTS indexing."""
 
-    originals: list[str] = []
-    normalized: list[str] = []
-    for part in parts:
-        if part is None:
-            continue
-        if isinstance(part, str):
-            values = [part]
-        else:
-            values = [str(item) for item in part]
-        for value in values:
-            stripped = value.strip()
-            if not stripped:
-                continue
-            originals.append(stripped)
-            separated = _IDENTIFIER_SEPARATOR_RE.sub(" ", stripped)
-            separated = _CAMEL_BOUNDARY_RE.sub(" ", separated)
-            normalized.append(separated)
-    return _WHITESPACE_RE.sub(" ", " ".join([*originals, *normalized])).strip()
+    return _normalize_search_text(*parts)
 
 
 def _word_count(text: str | None) -> int | None:
@@ -560,13 +540,16 @@ def search_pages(
 ) -> list[RowDict]:
     """Search projected pages with FTS5 BM25 ranking."""
 
+    if limit <= 0 or not query.strip():
+        return []
     archived_clause = "" if include_archived else "AND pages.archived = 0"
     rows = _rows(
         conn.execute(
             f"""
             SELECT
                 pages.*,
-                bm25(pages_fts) AS rank
+                bm25(pages_fts) AS rank,
+                snippet(pages_fts, 4, '', '', '…', 32) AS context
             FROM pages_fts
             JOIN pages ON pages.rowid = pages_fts.rowid
             WHERE pages_fts MATCH ? {archived_clause}

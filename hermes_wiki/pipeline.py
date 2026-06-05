@@ -378,18 +378,12 @@ def search_wiki(
 ) -> list[dict[str, object]]:
     """Run a simple FTS5 search against one visible Wiki."""
 
-    try:
-        resolved = ensure_wiki_mutable(slug=wiki)
-    except WikiManagementError as exc:
-        raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
-    from hermes_wiki.lint import ensure_projection_current
+    from hermes_wiki.search import search_wiki as _search_wiki
 
-    ensure_projection_current(resolved.path)
-    with db.connect_wiki(resolved.path / "wiki.db") as conn:
-        try:
-            return db.search_pages(conn, _fts_query(query), limit=limit)
-        except Exception as exc:
-            raise IngestError(f"search failed: {exc}") from exc
+    try:
+        return _search_wiki(query, wiki=wiki, limit=limit)
+    except WikiManagementError as exc:
+        raise IngestError(str(exc)) from exc
 
 
 def list_inbox(*, wiki: str | None = None) -> list[dict[str, str]]:
@@ -1275,8 +1269,9 @@ def _as_list(value: object) -> list[object]:
 
 
 def _fts_query(query: str) -> str:
-    terms = re.findall(r"[\w-]+", query, flags=re.UNICODE)
-    return " OR ".join(f'"{term}"' for term in terms) if terms else '""'
+    from hermes_wiki.search import build_fts_query
+
+    return build_fts_query(query) or ""
 
 
 def _utc_now() -> str:
