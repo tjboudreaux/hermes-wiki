@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,20 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+class _FakeUrlResponse:
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+
+    def __enter__(self) -> _FakeUrlResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _limit: int = -1) -> bytes:
+        return self._content
 
 
 def _write_article(path: Path, *, title: str = "Hermes Memory Article") -> None:
@@ -77,6 +92,22 @@ def _latest_source_path(wiki_root: Path) -> str:
         row = conn.execute("SELECT source_path FROM sources ORDER BY rowid DESC LIMIT 1").fetchone()
     assert row is not None
     return str(row[0])
+
+
+def _source_rows_for_url(wiki_root: Path, url: str) -> list[sqlite3.Row]:
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        conn.row_factory = sqlite3.Row
+        return list(
+            conn.execute(
+                """
+                SELECT id, version, is_latest, previous_source_id, sha256, source_path
+                FROM sources
+                WHERE source_url = ?
+                ORDER BY version
+                """,
+                (url,),
+            )
+        )
 
 
 def test_cli_ingest_local_source_creates_pages_projection_log_and_git(
@@ -590,3 +621,277 @@ def test_url_fetch_failure_and_same_slug_collisions_do_not_corrupt_state(
         path.relative_to(wiki_root) for path in wiki_root.rglob("*") if path.is_file()
     )
     assert files_after == files_before
+
+
+def test_identical_url_reingest_skips_without_new_snapshot_or_commit(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    """Same URL + identical bytes reports no change and leaves durable state unchanged."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    url = "https://example.test/hermes-memory.md"
+    content = "\n".join(
+        [
+            "# Hermes URL Memory",
+            "",
+            "Clipped article about Hermes URL re-ingestion and stable Source Snapshots.",
+        ]
+    ).encode()
+    monkeypatch.setattr(
+        pipeline.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: _FakeUrlResponse(content),
+    )
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", url, "--wiki", "ai-tooling") == 0
+    capsys.readouterr()
+    commits_before = _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip()
+    raw_files_before = sorted(
+        path.relative_to(wiki_root).as_posix()
+        for path in (wiki_root / "raw" / "articles").glob("*.md")
+    )
+    page_rows_before: int
+    source_rows_before: int
+    ingest_rows_before: int
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        page_rows_before = conn.execute("SELECT count(*) FROM pages").fetchone()[0]
+        source_rows_before = conn.execute("SELECT count(*) FROM sources").fetchone()[0]
+        ingest_rows_before = conn.execute("SELECT count(*) FROM ingest_log").fetchone()[0]
+
+    assert _run_cli(tmp_path, "ingest", url, "--wiki", "ai-tooling") == 0
+    out = capsys.readouterr().out
+    assert "no change" in out
+    assert _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip() == commits_before
+    assert sorted(
+        path.relative_to(wiki_root).as_posix()
+        for path in (wiki_root / "raw" / "articles").glob("*.md")
+    ) == raw_files_before
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("SELECT count(*) FROM pages").fetchone()[0] == page_rows_before
+        assert conn.execute("SELECT count(*) FROM sources").fetchone()[0] == source_rows_before
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone()[0] == ingest_rows_before
+
+
+def test_changed_url_reingest_versions_snapshot_updates_pages_and_flags_drift(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    """Changed URL content creates an append-only version chain and drift ingest log."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    url = "https://example.test/hermes-drift.md"
+    contents = [
+        "\n".join(
+            [
+                "# Hermes Drift Article",
+                "",
+                "Clipped article about Hermes drift detection and Source Snapshots.",
+            ]
+        ).encode(),
+        "\n".join(
+            [
+                "# Hermes Drift Article",
+                "",
+                "Clipped article about Hermes drift detection, Source Snapshots, and Δ unicode.",
+            ]
+        ).encode(),
+    ]
+
+    def fake_urlopen(*_args: object, **_kwargs: object) -> _FakeUrlResponse:
+        return _FakeUrlResponse(contents.pop(0))
+
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", fake_urlopen)
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", url, "--wiki", "ai-tooling") == 0
+    capsys.readouterr()
+    first_rows = _source_rows_for_url(wiki_root, url)
+    assert len(first_rows) == 1
+    old_source_id = str(first_rows[0]["id"])
+    old_raw = wiki_root / old_source_id
+    old_raw_hash = first_rows[0]["sha256"]
+    old_raw_bytes = old_raw.read_bytes()
+    commits_before_drift = _git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip()
+
+    assert _run_cli(tmp_path, "ingest", url, "--wiki", "ai-tooling") == 0
+    out = capsys.readouterr().out
+    assert "pages_updated:" in out
+    rows = _source_rows_for_url(wiki_root, url)
+    assert [(row["version"], row["is_latest"]) for row in rows] == [(1, 0), (2, 1)]
+    assert rows[1]["previous_source_id"] == old_source_id
+    assert rows[1]["id"] != old_source_id
+    assert old_raw.exists()
+    assert old_raw.read_bytes() == old_raw_bytes
+    assert rows[0]["sha256"] == old_raw_hash
+    new_raw = wiki_root / str(rows[1]["id"])
+    assert new_raw.is_file()
+    assert new_raw.read_bytes() != old_raw_bytes
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        conn.row_factory = sqlite3.Row
+        latest_log = conn.execute(
+            """
+            SELECT pages_created, pages_updated, drift_detected, sha256, source_path
+            FROM ingest_log
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        assert latest_log["drift_detected"] == 1
+        assert json_loads(latest_log["pages_updated"])
+        assert json_loads(latest_log["pages_created"])
+        assert latest_log["sha256"] == rows[1]["sha256"]
+        assert latest_log["source_path"] == rows[1]["id"]
+        latest_count = conn.execute(
+            "SELECT SUM(is_latest) FROM sources WHERE source_url = ?",
+            (url,),
+        ).fetchone()[0]
+        assert latest_count == 1
+    updated_page = next(
+        path
+        for directory in ("concepts", "entities")
+        for path in (wiki_root / directory).glob("hermes-drift-article.md")
+    )
+    metadata, body = _read_frontmatter(updated_page)
+    assert rows[1]["id"] in metadata["sources"]
+    assert "Δ unicode" in body
+    assert int(_git(wiki_root, "rev-list", "--count", "HEAD").stdout.strip()) == (
+        int(commits_before_drift) + 1
+    )
+    assert _git(wiki_root, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_identical_local_reingest_is_deterministic_and_preserves_latest_invariant(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Re-ingesting the same local path never creates competing latest source rows."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    article = tmp_path / "local-identical.md"
+    _write_article(article, title="Local Identical Article")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", str(article), "--wiki", "ai-tooling") == 0
+    capsys.readouterr()
+    assert _run_cli(tmp_path, "ingest", str(article), "--wiki", "ai-tooling") == 0
+    assert "no change" in capsys.readouterr().out
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        rows = conn.execute(
+            "SELECT version, is_latest, sha256 FROM sources ORDER BY rowid"
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 1
+    assert rows[0][1] == 1
+
+
+def test_unicode_ingest_preserves_raw_bytes_page_text_and_search(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Non-ASCII content is byte-stable in raw snapshots and searchable in pages."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    article = tmp_path / "unicode.md"
+    text = "\n".join(
+        [
+            "# Café 東京 Article",
+            "",
+            "Clipped article preserving naïve café terms, 東京 research notes, and 🚀 emoji.",
+        ]
+    )
+    article.write_text(text, encoding="utf-8")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", str(article), "--wiki", "ai-tooling") == 0
+    capsys.readouterr()
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        conn.row_factory = sqlite3.Row
+        source = conn.execute(
+            "SELECT id, sha256 FROM sources ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        ingest = conn.execute(
+            "SELECT sha256 FROM ingest_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    raw = wiki_root / str(source["id"])
+    assert raw.read_bytes() == article.read_bytes()
+    assert pipeline.hashlib.sha256(raw.read_bytes()).hexdigest() == source["sha256"]
+    assert ingest["sha256"] == source["sha256"]
+    page_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in (wiki_root / "sources").glob("*.md")
+    )
+    assert "Café 東京 Article" in page_text
+    assert "東京 research notes" in page_text
+    assert "�" not in page_text
+    assert _run_cli(tmp_path, "search", "東京", "--wiki", "ai-tooling") == 0
+    assert "sources/" in capsys.readouterr().out
+
+
+def test_concurrent_cli_ingests_are_serialized_without_corruption(tmp_path: Path) -> None:
+    """Concurrent CLI ingests both commit and leave a valid projection."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    first = tmp_path / "concurrent-alpha.md"
+    second = tmp_path / "concurrent-beta.md"
+    _write_article(first, title="Concurrent Alpha Article")
+    _write_article(second, title="Concurrent Beta Article")
+
+    env = {**os.environ, "HERMES_HOME": str(tmp_path), "USER": "ingest-tester"}
+    cmd_a = [
+        sys.executable,
+        "-m",
+        "hermes_wiki_cli.cli",
+        "ingest",
+        str(first),
+        "--wiki",
+        "ai-tooling",
+    ]
+    cmd_b = [
+        sys.executable,
+        "-m",
+        "hermes_wiki_cli.cli",
+        "ingest",
+        str(second),
+        "--wiki",
+        "ai-tooling",
+    ]
+    process_a = subprocess.Popen(
+        cmd_a,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    process_b = subprocess.Popen(
+        cmd_b,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    stdout_a, stderr_a = process_a.communicate(timeout=30)
+    stdout_b, stderr_b = process_b.communicate(timeout=30)
+    proc_a = subprocess.CompletedProcess(cmd_a, process_a.returncode, stdout_a, stderr_a)
+    proc_b = subprocess.CompletedProcess(cmd_b, process_b.returncode, stdout_b, stderr_b)
+    assert proc_a.returncode == 0, proc_a.stderr
+    assert proc_b.returncode == 0, proc_b.stderr
+
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone()[0] == 2
+        assert conn.execute("SELECT count(*) FROM sources").fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT count(*) FROM pages WHERE id LIKE 'sources/%'"
+        ).fetchone()[0] == 2
+    log = _git(wiki_root, "log", "--oneline", "--grep=wiki: ingest").stdout
+    assert log.count("wiki: ingest") == 2
+    assert _git(wiki_root, "status", "--porcelain").stdout.strip() == ""
+
+
+def json_loads(value: str | None) -> Any:
+    import json
+
+    return json.loads(value or "[]")

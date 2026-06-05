@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from hermes_wiki import db, git_ops, projection
@@ -96,6 +98,16 @@ class IngestResult:
     commit_id: str | None
     skipped: bool = False
     message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceVersionPlan:
+    """Version metadata for the Source Snapshot being materialized."""
+
+    version: int
+    previous_source_id: str | None
+    drift_detected: bool
+    superseded_source_ids: tuple[str, ...] = ()
 
 
 class Processor(Protocol):
@@ -250,23 +262,47 @@ def _ingest_source_content(
     remove_source_path: Path | None,
     preclassified_label: ClassLabel | None = None,
 ) -> IngestResult:
+    with _ingest_lock(wiki_root):
+        return _ingest_source_content_locked(
+            source_ref,
+            source=source,
+            wiki_slug=wiki_slug,
+            wiki_root=wiki_root,
+            author=author,
+            processor=processor,
+            remove_source_path=remove_source_path,
+            preclassified_label=preclassified_label,
+        )
+
+
+def _ingest_source_content_locked(
+    source_ref: str,
+    *,
+    source: _SourceContent,
+    wiki_slug: str,
+    wiki_root: Path,
+    author: str,
+    processor: Processor | None,
+    remove_source_path: Path | None,
+    preclassified_label: ClassLabel | None = None,
+) -> IngestResult:
     label = preclassified_label or classify_source(source.name, source.content, wiki_root=wiki_root)
     digest = hashlib.sha256(source.content).hexdigest()
     now = _utc_now()
     today = now[:10]
     existing_pages = tuple(_existing_pages(wiki_root))
 
-    if source.url:
-        skipped = _skip_if_url_unchanged(wiki_root, source.url, digest)
-        if skipped is not None:
-            return skipped
+    version_plan_or_skip = _plan_source_version(wiki_root, source=source, digest=digest)
+    if isinstance(version_plan_or_skip, IngestResult):
+        return version_plan_or_skip
+    version_plan = version_plan_or_skip
 
     source_slug = _source_slug(source.name, source.text)
     raw_relpath = _unique_raw_relpath(
         wiki_root,
         label=label.name,
         today=today,
-        version=1,
+        version=version_plan.version,
         slug=source_slug,
         suffix=source.suffix,
     )
@@ -302,6 +338,7 @@ def _ingest_source_content(
             now=now,
             author=author,
             remove_source_path=remove_source_path,
+            version_plan=version_plan,
         )
     except Exception as exc:
         if isinstance(exc, IngestError):
@@ -517,6 +554,7 @@ def _materialize_ingest(
     digest: str,
     now: str,
     author: str,
+    version_plan: _SourceVersionPlan,
     remove_source_path: Path | None = None,
 ) -> IngestResult:
     touched: dict[Path, bytes | None] = {}
@@ -590,6 +628,7 @@ def _materialize_ingest(
             pages_created=pages_created,
             pages_updated=pages_updated,
             author=author,
+            version_plan=version_plan,
         )
         _update_registry_after_ingest(wiki_root, wiki_slug=wiki_slug, now=now)
         commit = git_ops.commit_change(
@@ -666,6 +705,89 @@ def _read_source(source_ref: str) -> _SourceContent:
         content=content,
         text=_decode_text(content),
         url=None,
+    )
+
+
+def _plan_source_version(
+    wiki_root: Path,
+    *,
+    source: _SourceContent,
+    digest: str,
+) -> _SourceVersionPlan | IngestResult:
+    wiki_db = wiki_root / "wiki.db"
+    if not wiki_db.exists():
+        return _SourceVersionPlan(version=1, previous_source_id=None, drift_detected=False)
+    with db.connect_wiki(wiki_db) as conn:
+        if source.url is not None:
+            rows = list(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM sources
+                    WHERE source_url = ?
+                    ORDER BY version, ingested_at, id
+                    """,
+                    (source.url,),
+                )
+            )
+            if not rows:
+                return _SourceVersionPlan(
+                    version=1,
+                    previous_source_id=None,
+                    drift_detected=False,
+                )
+            latest_rows = [row for row in rows if int(row["is_latest"] or 0) == 1]
+            latest = max(latest_rows or rows, key=lambda row: int(row["version"] or 1))
+            if latest["sha256"] == digest:
+                return _no_change_result(
+                    wiki_root,
+                    row=latest,
+                    digest=digest,
+                    source_url=source.url,
+                )
+            latest_version = max(int(row["version"] or 1) for row in rows)
+            superseded = tuple(str(row["id"]) for row in (latest_rows or [latest]))
+            return _SourceVersionPlan(
+                version=latest_version + 1,
+                previous_source_id=str(latest["id"]),
+                drift_detected=True,
+                superseded_source_ids=superseded,
+            )
+
+        row = conn.execute(
+            """
+            SELECT *
+            FROM sources
+            WHERE source_url IS NULL AND sha256 = ? AND is_latest = 1
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT 1
+            """,
+            (digest,),
+        ).fetchone()
+        if row is not None:
+            return _no_change_result(wiki_root, row=row, digest=digest, source_url=None)
+    return _SourceVersionPlan(version=1, previous_source_id=None, drift_detected=False)
+
+
+def _no_change_result(
+    wiki_root: Path,
+    *,
+    row: Any,
+    digest: str,
+    source_url: str | None,
+) -> IngestResult:
+    return IngestResult(
+        wiki=wiki_root.name,
+        classified_as=str(row["classified_as"] or "unknown"),
+        source_id=str(row["id"]),
+        sha256=digest,
+        pages_created=(),
+        pages_updated=(),
+        raw_snapshot=str(row["source_path"] or row["id"]),
+        source_url=source_url,
+        commit_id=None,
+        skipped=True,
+        message="no change",
     )
 
 
@@ -788,8 +910,11 @@ def _record_ingest_rows(
     pages_created: list[str],
     pages_updated: list[str],
     author: str,
+    version_plan: _SourceVersionPlan,
 ) -> None:
     with db.connect_wiki(wiki_root / "wiki.db") as conn:
+        for superseded_id in version_plan.superseded_source_ids:
+            db.mark_source_not_latest(conn, superseded_id)
         db.upsert_source(
             conn,
             id=source_id,
@@ -797,8 +922,8 @@ def _record_ingest_rows(
             sha256=digest,
             source_url=source.url,
             source_path=source_id,
-            version=1,
-            previous_source_id=None,
+            version=version_plan.version,
+            previous_source_id=version_plan.previous_source_id,
             is_latest=1,
             classified_as=label.name,
         )
@@ -807,11 +932,11 @@ def _record_ingest_rows(
             ingested_at=now,
             source_type=label.name,
             source_url=source.url,
-            source_path=None if source.url else source.ref,
+            source_path=source_id,
             sha256=digest,
             pages_created=pages_created,
             pages_updated=pages_updated,
-            drift_detected=0,
+            drift_detected=1 if version_plan.drift_detected else 0,
             author=author,
             author_kind="human",
         )
@@ -1055,6 +1180,20 @@ def _fts_query(query: str) -> str:
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def _ingest_lock(wiki_root: Path) -> Iterator[None]:
+    """Serialize ingest runs that mutate the same Wiki Repository."""
+
+    lock_path = wiki_root / ".ingest.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _remember(touched: dict[Path, bytes | None], path: Path) -> None:
