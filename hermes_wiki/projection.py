@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from hermes_wiki import db
+from hermes_wiki import db, git_ops
 
 ALLOWED_REBUILD_REASONS = {"initial", "ingest", "lint-repair", "migration", "manual"}
 PAGE_DIR_TYPES = {
@@ -26,13 +26,8 @@ PAGE_DIR_TYPES = {
     "sources": "source",
     "summaries": "summary",
 }
-PROJECTION_GITIGNORE_MARKER = "# Hermes Wiki projection binaries"
-PROJECTION_GITIGNORE_ENTRIES = (
-    "wiki.db",
-    "wiki.db.tmp",
-    "db_versions/*.db",
-    "!db_versions/manifest.jsonl",
-)
+PROJECTION_GITIGNORE_MARKER = git_ops.GITIGNORE_MARKER
+PROJECTION_GITIGNORE_ENTRIES = git_ops.GITIGNORE_ENTRIES
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,19 +189,7 @@ def rebuild_projection(
 def ensure_projection_gitignore(wiki_root: Path | str) -> Path:
     """Ensure a per-wiki ``.gitignore`` ignores projection binaries only."""
 
-    gitignore = Path(wiki_root) / ".gitignore"
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    lines = existing.splitlines()
-    updated = list(lines)
-    if PROJECTION_GITIGNORE_MARKER not in updated:
-        if updated and updated[-1] != "":
-            updated.append("")
-        updated.append(PROJECTION_GITIGNORE_MARKER)
-    for entry in PROJECTION_GITIGNORE_ENTRIES:
-        if entry not in updated:
-            updated.append(entry)
-    gitignore.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
-    return gitignore
+    return git_ops.ensure_gitignore(wiki_root)
 
 
 def sha256_file(path: Path | str) -> str:
