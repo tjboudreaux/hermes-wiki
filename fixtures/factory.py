@@ -46,15 +46,21 @@ def build_test_wiki(tmp_path: Path | str) -> TestWikiFixture:
     return build_populated_home(Path(tmp_path) / "hermes-home")
 
 
-def build_populated_home(home: Path | str) -> TestWikiFixture:
-    """Build the shared multi-wiki fixture in an exact isolated home path."""
+def build_populated_home(home: Path | str, *, clean: bool = False) -> TestWikiFixture:
+    """Build the shared multi-wiki fixture in an exact isolated home path.
+
+    By default the primary wiki intentionally includes lint violations required
+    by health-check tests. Pass ``clean=True`` to build a violation-free primary
+    wiki for validators that need a passing lint baseline.
+    """
 
     target_home = Path(home)
     _assert_safe_home(target_home)
     wikis_dir = target_home / "wikis"
     wikis_dir.mkdir(parents=True, exist_ok=True)
 
-    primary_root = _create_primary_wiki(target_home)
+    pages = _primary_pages(clean=clean)
+    primary_root = _create_primary_wiki(target_home, clean=clean)
     archived_root = _create_registry_wiki(
         target_home,
         slug=seed_data.ARCHIVED_WIKI_SLUG,
@@ -84,11 +90,11 @@ def build_populated_home(home: Path | str) -> TestWikiFixture:
             domain=seed_data.PRIMARY_WIKI_DOMAIN,
             created=seed_data.FIXED_PREVIOUS,
             updated=seed_data.FIXED_NOW,
-            page_count=len(seed_data.PRIMARY_PAGES),
+            page_count=len(pages),
             source_count=len(seed_data.RAW_SOURCE_DESTINATIONS),
             last_ingest=seed_data.FIXED_NOW,
             last_lint=seed_data.FIXED_NOW,
-            health_score=0.72,
+            health_score=1.0 if clean else 0.72,
         )
         db.upsert_wiki(
             conn,
@@ -118,7 +124,7 @@ def build_populated_home(home: Path | str) -> TestWikiFixture:
         )
         conn.commit()
 
-    inbox_paths = _write_inbox_samples(primary_root)
+    inbox_paths = {} if clean else _write_inbox_samples(primary_root)
 
     return TestWikiFixture(
         home=target_home,
@@ -130,12 +136,18 @@ def build_populated_home(home: Path | str) -> TestWikiFixture:
         archived_wiki_root=archived_root,
         private_wiki_root=private_root,
         primary_wiki_db=primary_root / "wiki.db",
-        page_ids=tuple(page.id for page in seed_data.PRIMARY_PAGES),
+        page_ids=tuple(page.id for page in pages),
         raw_source_paths=tuple(seed_data.RAW_SOURCE_DESTINATIONS.values()),
         inbox_paths=inbox_paths,
-        lint_findings=seed_data.LINT_FINDINGS,
+        lint_findings=() if clean else seed_data.LINT_FINDINGS,
         profile=seed_data.PROFILE_NAME,
     )
+
+
+def build_clean_home(home: Path | str) -> TestWikiFixture:
+    """Build a shared fixture home whose primary wiki has zero lint findings."""
+
+    return build_populated_home(home, clean=True)
 
 
 def _assert_safe_home(home: Path) -> None:
@@ -184,7 +196,8 @@ def _create_registry_wiki(
     return wiki_root
 
 
-def _create_primary_wiki(home: Path) -> Path:
+def _create_primary_wiki(home: Path, *, clean: bool) -> Path:
+    pages = _primary_pages(clean=clean)
     wiki_root = git_ops.initialize_wiki_repo(home, seed_data.PRIMARY_WIKI_SLUG)
     templates.write_wiki_starter_files(
         wiki_root,
@@ -202,14 +215,48 @@ def _create_primary_wiki(home: Path) -> Path:
     )
 
     _copy_classified_raw_sources(wiki_root)
-    _write_primary_pages(wiki_root, use_initial_agent_memory=True)
+    if clean:
+        _write_primary_pages(wiki_root, pages=pages, use_initial_agent_memory=False)
+        _append_log_row(
+            wiki_root,
+            action="ingest",
+            target="clean-fixture-sources",
+            details="Seeded only valid pages for a clean lint baseline.",
+        )
+        _rewrite_index(wiki_root, pages=pages)
+        git_ops.commit_change(
+            wiki_root,
+            action="ingest",
+            what="clean-fixture-sources",
+            author=seed_data.FIXTURE_AUTHOR,
+        )
+        _seed_support_projection_rows(
+            wiki_root,
+            pages=pages,
+            include_inbox_attempts=False,
+        )
+        projection.rebuild_projection(
+            wiki_root,
+            rebuild_reason="initial",
+            author=seed_data.FIXTURE_AUTHOR,
+            author_kind=seed_data.FIXTURE_AUTHOR_KIND,
+        )
+        git_ops.commit_change(
+            wiki_root,
+            action="rebuild",
+            what="projection",
+            author=seed_data.FIXTURE_AUTHOR,
+        )
+        return wiki_root
+
+    _write_primary_pages(wiki_root, pages=pages, use_initial_agent_memory=True)
     _append_log_row(
         wiki_root,
         action="ingest",
         target="fixture-sources",
         details="Seeded source/entity/concept/comparison/query/summary pages.",
     )
-    _rewrite_index(wiki_root)
+    _rewrite_index(wiki_root, pages=pages)
     git_ops.commit_change(
         wiki_root,
         action="ingest",
@@ -217,14 +264,14 @@ def _create_primary_wiki(home: Path) -> Path:
         author=seed_data.FIXTURE_AUTHOR,
     )
 
-    _write_primary_pages(wiki_root, use_initial_agent_memory=False)
+    _write_primary_pages(wiki_root, pages=pages, use_initial_agent_memory=False)
     _append_log_row(
         wiki_root,
         action="edit",
         target="concepts/agent-memory",
         details="Updated links, search-normalization term, and kanban reference.",
     )
-    _rewrite_index(wiki_root)
+    _rewrite_index(wiki_root, pages=pages)
     git_ops.commit_change(
         wiki_root,
         action="edit",
@@ -255,8 +302,13 @@ def _copy_classified_raw_sources(wiki_root: Path) -> None:
         shutil.copyfile(seed_data.sample_source_path(kind), target)
 
 
-def _write_primary_pages(wiki_root: Path, *, use_initial_agent_memory: bool) -> None:
-    for page in seed_data.PRIMARY_PAGES:
+def _write_primary_pages(
+    wiki_root: Path,
+    *,
+    pages: tuple[PageSeed, ...],
+    use_initial_agent_memory: bool,
+) -> None:
+    for page in pages:
         body = (
             seed_data.INITIAL_AGENT_MEMORY_BODY
             if use_initial_agent_memory and page.id == "concepts/agent-memory"
@@ -320,9 +372,9 @@ def _append_log_row(wiki_root: Path, *, action: str, target: str, details: str) 
         handle.write(row)
 
 
-def _rewrite_index(wiki_root: Path) -> None:
+def _rewrite_index(wiki_root: Path, *, pages: tuple[PageSeed, ...]) -> None:
     sections: dict[str, list[PageSeed]] = {page_type: [] for page_type in seed_data.PAGE_TYPES}
-    for page in seed_data.PRIMARY_PAGES:
+    for page in pages:
         sections[page.type].append(page)
     lines = [
         f"# Index: {seed_data.PRIMARY_WIKI_SLUG}",
@@ -363,59 +415,11 @@ def _populate_primary_projection(wiki_root: Path) -> None:
                 snippet=_snippet(page.body),
                 body_text=page.body,
             )
-        for tag in seed_data.TAXONOMY_TAGS:
-            db.add_taxonomy_tag(conn, tag=tag, created="2026-06-05")
-        for kind, source_id in seed_data.RAW_SOURCE_DESTINATIONS.items():
-            source_path = wiki_root / source_id
-            db.upsert_source(
-                conn,
-                id=source_id,
-                ingested_at=seed_data.FIXED_NOW,
-                sha256=projection.sha256_file(source_path),
-                source_url=f"https://fixtures.invalid/{kind}",
-                source_path=source_id,
-                version=1,
-                previous_source_id=None,
-                is_latest=1,
-                classified_as=kind,
-            )
-            db.insert_ingest_log(
-                conn,
-                ingested_at=seed_data.FIXED_NOW,
-                source_type=kind,
-                source_url=f"https://fixtures.invalid/{kind}",
-                source_path=source_id,
-                sha256=projection.sha256_file(source_path),
-                pages_created=[
-                    page.id for page in seed_data.PRIMARY_PAGES if source_id in page.sources
-                ],
-                pages_updated=[],
-                author=seed_data.FIXTURE_AUTHOR,
-                author_kind=seed_data.FIXTURE_AUTHOR_KIND,
-            )
-        db.insert_ingest_log(
-            conn,
-            ingested_at=seed_data.FIXED_NOW,
-            source_type="unknown",
-            source_url=None,
-            source_path="raw/inbox/unknown-sample.dat",
-            sha256=None,
-            pages_created=[],
-            pages_updated=[],
-            author=seed_data.FIXTURE_AUTHOR,
-            author_kind=seed_data.FIXTURE_AUTHOR_KIND,
-        )
-        db.insert_ingest_log(
-            conn,
-            ingested_at=seed_data.FIXED_NOW,
-            source_type="oversized",
-            source_url=None,
-            source_path="raw/inbox/oversized-sample.bin",
-            sha256=None,
-            pages_created=[],
-            pages_updated=[],
-            author=seed_data.FIXTURE_AUTHOR,
-            author_kind=seed_data.FIXTURE_AUTHOR_KIND,
+        _seed_support_projection_rows(
+            wiki_root,
+            conn=conn,
+            pages=seed_data.PRIMARY_PAGES,
+            include_inbox_attempts=True,
         )
         for page in seed_data.PRIMARY_PAGES:
             for ref in page.kanban_refs:
@@ -430,6 +434,83 @@ def _populate_primary_projection(wiki_root: Path) -> None:
         db.rebuild_pages_fts(conn)
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+def _seed_support_projection_rows(
+    wiki_root: Path,
+    *,
+    pages: tuple[PageSeed, ...],
+    include_inbox_attempts: bool,
+    conn: Any | None = None,
+) -> None:
+    if conn is None:
+        with db.connect_wiki(wiki_root / "wiki.db") as owned_conn:
+            db.initialize_wiki(owned_conn)
+            _seed_support_projection_rows(
+                wiki_root,
+                conn=owned_conn,
+                pages=pages,
+                include_inbox_attempts=include_inbox_attempts,
+            )
+            owned_conn.commit()
+            owned_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return
+
+    for tag in seed_data.TAXONOMY_TAGS:
+        db.add_taxonomy_tag(conn, tag=tag, created="2026-06-05")
+    for kind, source_id in seed_data.RAW_SOURCE_DESTINATIONS.items():
+        source_path = wiki_root / source_id
+        sha256 = projection.sha256_file(source_path)
+        db.upsert_source(
+            conn,
+            id=source_id,
+            ingested_at=seed_data.FIXED_NOW,
+            sha256=sha256,
+            source_url=f"https://fixtures.invalid/{kind}",
+            source_path=source_id,
+            version=1,
+            previous_source_id=None,
+            is_latest=1,
+            classified_as=kind,
+        )
+        db.insert_ingest_log(
+            conn,
+            ingested_at=seed_data.FIXED_NOW,
+            source_type=kind,
+            source_url=f"https://fixtures.invalid/{kind}",
+            source_path=source_id,
+            sha256=sha256,
+            pages_created=[page.id for page in pages if source_id in page.sources],
+            pages_updated=[],
+            author=seed_data.FIXTURE_AUTHOR,
+            author_kind=seed_data.FIXTURE_AUTHOR_KIND,
+        )
+    if not include_inbox_attempts:
+        return
+    db.insert_ingest_log(
+        conn,
+        ingested_at=seed_data.FIXED_NOW,
+        source_type="unknown",
+        source_url=None,
+        source_path="raw/inbox/unknown-sample.dat",
+        sha256=None,
+        pages_created=[],
+        pages_updated=[],
+        author=seed_data.FIXTURE_AUTHOR,
+        author_kind=seed_data.FIXTURE_AUTHOR_KIND,
+    )
+    db.insert_ingest_log(
+        conn,
+        ingested_at=seed_data.FIXED_NOW,
+        source_type="oversized",
+        source_url=None,
+        source_path="raw/inbox/oversized-sample.bin",
+        sha256=None,
+        pages_created=[],
+        pages_updated=[],
+        author=seed_data.FIXTURE_AUTHOR,
+        author_kind=seed_data.FIXTURE_AUTHOR_KIND,
+    )
 
 
 def _write_inbox_samples(wiki_root: Path) -> dict[str, Path]:
@@ -453,9 +534,14 @@ def _snippet(body: str) -> str | None:
     return None
 
 
+def _primary_pages(*, clean: bool) -> tuple[PageSeed, ...]:
+    return seed_data.CLEAN_PRIMARY_PAGES if clean else seed_data.PRIMARY_PAGES
+
+
 __all__ = [
     "OVERSIZED_SAMPLE_BYTES",
     "TestWikiFixture",
+    "build_clean_home",
     "build_populated_home",
     "build_test_wiki",
 ]

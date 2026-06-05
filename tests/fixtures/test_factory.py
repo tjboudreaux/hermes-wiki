@@ -7,7 +7,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from fixtures.factory import OVERSIZED_SAMPLE_BYTES, build_test_wiki
+from fixtures.factory import OVERSIZED_SAMPLE_BYTES, build_clean_home, build_test_wiki
 from fixtures.seed_data import (
     PAGE_TYPE_DIRECTORIES,
     PAGE_TYPES,
@@ -15,6 +15,7 @@ from fixtures.seed_data import (
     sample_source_path,
 )
 from hermes_wiki import db
+from hermes_wiki.lint import lint_wiki
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -142,3 +143,25 @@ def test_factory_exposes_multi_severity_lint_conditions_and_valid_projection(
         ).fetchone()[0]
         assert active_projection_count == 1
         assert conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == len(fixture.page_ids)
+
+
+def test_clean_fixture_lints_clean_with_max_health(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The clean fixture mode produces only valid pages and zero lint findings."""
+
+    fixture = build_clean_home(tmp_path / "clean-hermes-home")
+    monkeypatch.setenv("HERMES_HOME", str(fixture.home))
+
+    report = lint_wiki(slug=fixture.primary_slug, profile=fixture.profile)
+
+    assert report.status == "clean"
+    assert report.findings == []
+    assert report.health_score == 1.0
+    assert fixture.lint_findings == ()
+    assert fixture.inbox_paths == {}
+    with db.connect_registry(fixture.registry_db) as conn:
+        row = db.get_wiki(conn, fixture.primary_slug)
+    assert row is not None
+    assert float(row["health_score"]) == 1.0

@@ -292,6 +292,233 @@ PRIMARY_PAGES = (
     ),
 )
 
+CLEAN_PRIMARY_PAGES = (
+    PageSeed(
+        id="sources/2026-06-05-agent-memory-article",
+        title="Agent Memory Article",
+        type="source",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("agents", "memory", "research"),
+        sources=(RAW_SOURCE_DESTINATIONS["article"],),
+        confidence="high",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Agent Memory Article",
+                "",
+                "Curated Source Page summarizing the immutable article snapshot.",
+                "The article explains why durable memory improves coding-agent continuity.",
+                "Key derived pages: [Agent Memory](../concepts/agent-memory.md) and "
+                "[Hermes](../entities/hermes.md).",
+            ]
+        ),
+        links=("concepts/agent-memory", "entities/hermes"),
+    ),
+    PageSeed(
+        id="sources/2026-06-05-agent-systems-paper",
+        title="Agent Systems Paper",
+        type="source",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("agents", "research", "evaluation"),
+        sources=(RAW_SOURCE_DESTINATIONS["paper"],),
+        confidence="high",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Agent Systems Paper",
+                "",
+                "Curated Source Page summarizing the paper snapshot about agent systems.",
+                "It grounds [Agent Memory](../concepts/agent-memory.md) and "
+                "[Memory vs Scratchpad](../comparisons/memory-vs-scratchpad.md).",
+            ]
+        ),
+        links=("concepts/agent-memory", "comparisons/memory-vs-scratchpad"),
+    ),
+    PageSeed(
+        id="sources/2026-06-05-memory-workshop-transcript",
+        title="Memory Workshop Transcript",
+        type="source",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("agents", "memory", "operations"),
+        sources=(RAW_SOURCE_DESTINATIONS["transcript"],),
+        confidence="medium",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Memory Workshop Transcript",
+                "",
+                "Curated Source Page summarizing workshop notes about operational memory use.",
+                "It informs [Evaluate Agent Memory](../queries/evaluate-agent-memory.md) and "
+                "[Agent Operations Summary](../summaries/agent-operations.md).",
+            ]
+        ),
+        links=("queries/evaluate-agent-memory", "summaries/agent-operations"),
+    ),
+    PageSeed(
+        id="concepts/agent-memory",
+        title="Agent Memory",
+        type="concept",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("agents", "memory", "tooling"),
+        sources=(
+            RAW_SOURCE_DESTINATIONS["article"],
+            RAW_SOURCE_DESTINATIONS["paper"],
+            RAW_SOURCE_DESTINATIONS["transcript"],
+        ),
+        confidence="high",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Agent Memory",
+                "",
+                "Agent memory stores reusable context between Hermes sessions.",
+                "The getCwd helper appears in examples so search normalization can match get cwd.",
+                "Evidence comes from [Agent Memory Article]"
+                "(../sources/2026-06-05-agent-memory-article.md), "
+                "[Agent Systems Paper](../sources/2026-06-05-agent-systems-paper.md), and "
+                "[Memory Workshop Transcript]"
+                "(../sources/2026-06-05-memory-workshop-transcript.md).",
+                "Hermes is tracked as [Hermes](../entities/hermes.md), and memory tradeoffs are "
+                "summarized in [Memory vs Scratchpad](../comparisons/memory-vs-scratchpad.md).",
+            ]
+        ),
+        links=(
+            "sources/2026-06-05-agent-memory-article",
+            "sources/2026-06-05-agent-systems-paper",
+            "sources/2026-06-05-memory-workshop-transcript",
+            "entities/hermes",
+            "comparisons/memory-vs-scratchpad",
+        ),
+    ),
+    PageSeed(
+        id="entities/hermes",
+        title="Hermes",
+        type="entity",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("agents", "tooling"),
+        sources=(RAW_SOURCE_DESTINATIONS["article"], RAW_SOURCE_DESTINATIONS["transcript"]),
+        confidence="medium",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Hermes",
+                "",
+                "Hermes is the agent environment hosting the Wiki Surface.",
+                "It relies on [Agent Memory](../concepts/agent-memory.md) to retain domain context "
+                "and cites the [Memory Workshop Transcript]"
+                "(../sources/2026-06-05-memory-workshop-transcript.md).",
+            ]
+        ),
+        links=("concepts/agent-memory", "sources/2026-06-05-memory-workshop-transcript"),
+    ),
+    PageSeed(
+        id="comparisons/memory-vs-scratchpad",
+        title="Memory vs Scratchpad",
+        type="comparison",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("memory", "evaluation"),
+        sources=(RAW_SOURCE_DESTINATIONS["paper"],),
+        confidence="medium",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Memory vs Scratchpad",
+                "",
+                "[Agent Memory](../concepts/agent-memory.md) persists across sessions; scratchpads "
+                "are transient.",
+                "The [Agent Systems Paper](../sources/2026-06-05-agent-systems-paper.md) and "
+                "[Evaluate Agent Memory](../queries/evaluate-agent-memory.md) explain when each "
+                "approach is useful.",
+            ]
+        ),
+        links=(
+            "concepts/agent-memory",
+            "sources/2026-06-05-agent-systems-paper",
+            "queries/evaluate-agent-memory",
+        ),
+    ),
+    PageSeed(
+        id="queries/evaluate-agent-memory",
+        title="Evaluate Agent Memory",
+        type="query",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("evaluation", "memory"),
+        sources=(RAW_SOURCE_DESTINATIONS["transcript"],),
+        confidence="medium",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Evaluate Agent Memory",
+                "",
+                "Evaluation should compare task continuity, retrieval precision, "
+                "and operator effort.",
+                "Consult [Agent Memory](../concepts/agent-memory.md), "
+                "[Memory Workshop Transcript]"
+                "(../sources/2026-06-05-memory-workshop-transcript.md), "
+                "and [Agent Operations Summary](../summaries/agent-operations.md).",
+            ]
+        ),
+        links=(
+            "concepts/agent-memory",
+            "sources/2026-06-05-memory-workshop-transcript",
+            "summaries/agent-operations",
+        ),
+    ),
+    PageSeed(
+        id="summaries/agent-operations",
+        title="Agent Operations Summary",
+        type="summary",
+        created=FIXED_PREVIOUS,
+        updated=FIXED_NOW,
+        tags=("operations", "agents", "memory"),
+        sources=(RAW_SOURCE_DESTINATIONS["article"], RAW_SOURCE_DESTINATIONS["transcript"]),
+        confidence="medium",
+        contested=False,
+        author=FIXTURE_AUTHOR,
+        author_kind=FIXTURE_AUTHOR_KIND,
+        body="\n".join(
+            [
+                "# Agent Operations Summary",
+                "",
+                "Operational wiki care keeps evidence attributed, links current, "
+                "and stale claims visible.",
+                "The summary cites [Agent Memory](../concepts/agent-memory.md), "
+                "[Hermes](../entities/hermes.md), "
+                "[Agent Memory Article](../sources/2026-06-05-agent-memory-article.md), and "
+                "[Memory Workshop Transcript]"
+                "(../sources/2026-06-05-memory-workshop-transcript.md).",
+            ]
+        ),
+        links=(
+            "concepts/agent-memory",
+            "entities/hermes",
+            "sources/2026-06-05-agent-memory-article",
+            "sources/2026-06-05-memory-workshop-transcript",
+        ),
+    ),
+)
+
 INITIAL_AGENT_MEMORY_BODY = "\n".join(
     [
         "# Agent Memory",
@@ -337,6 +564,7 @@ LINT_FINDINGS = (
 __all__ = [
     "ARCHIVED_WIKI_DOMAIN",
     "ARCHIVED_WIKI_SLUG",
+    "CLEAN_PRIMARY_PAGES",
     "FIXED_NOW",
     "FIXED_PREVIOUS",
     "FIXTURE_AUTHOR",
