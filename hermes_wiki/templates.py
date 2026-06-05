@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from hermes_wiki._validators import ValidationError, validate_slug
 
 STARTER_FILENAMES = ("SCHEMA.md", "index.md", "log.md")
 WIKI_DIRECTORIES = (
@@ -31,7 +32,6 @@ WIKI_DIRECTORIES = (
     "plugins/classifiers",
     "plugins/processors",
 )
-_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,11 +313,10 @@ def _timestamp(value: str | None) -> str:
 
 def _validate_slug(slug: str) -> str:
     clean_slug = _one_line_required(slug, "slug")
-    if not _SLUG_RE.fullmatch(clean_slug):
-        raise ValueError(
-            "wiki slug must be lowercase alphanumeric with optional single-hyphen separators"
-        )
-    return clean_slug
+    try:
+        return validate_slug(clean_slug)
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _default_author(author: str | None) -> str:

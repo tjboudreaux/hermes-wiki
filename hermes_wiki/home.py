@@ -15,15 +15,12 @@ closed instead of silently falling through to a later tier.
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from adapters.base import HomeResolver, create_adapters
-
-_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+from hermes_wiki._validators import ValidationError, validate_profile, validate_slug
 
 
 class WikiResolutionError(RuntimeError):
@@ -131,9 +128,10 @@ def _optional_profile(value: str | None) -> str | None:
     profile = value.strip()
     if not profile:
         return None
-    if not _PROFILE_RE.fullmatch(profile) or profile in {".", ".."}:
-        raise WikiResolutionError(f"invalid profile name {value!r}")
-    return profile
+    try:
+        return validate_profile(profile)
+    except ValidationError as exc:
+        raise WikiResolutionError(str(exc)) from exc
 
 
 def _read_pointer_file(path: Path, *, source_label: str) -> str | None:
@@ -165,8 +163,10 @@ def _resolve_slug(
 
 
 def _validate_slug(slug: str) -> None:
-    if not _SLUG_RE.fullmatch(slug) or slug in {".", ".."}:
-        raise WikiResolutionError(f"invalid wiki slug {slug!r}")
+    try:
+        validate_slug(slug)
+    except ValidationError as exc:
+        raise WikiResolutionError(str(exc)) from exc
 
 
 __all__ = ["ResolvedWiki", "WikiResolutionError", "resolve_home", "resolve_wiki"]

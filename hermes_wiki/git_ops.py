@@ -16,7 +16,11 @@ from pathlib import Path
 GITIGNORE_MARKER = "# Hermes Wiki projection binaries"
 GITIGNORE_ENTRIES = (
     "wiki.db",
+    "wiki.db-shm",
+    "wiki.db-wal",
     "wiki.db.tmp",
+    "wiki.db.tmp-shm",
+    "wiki.db.tmp-wal",
     "db_versions/*.db",
     "!db_versions/manifest.jsonl",
 )
@@ -230,7 +234,14 @@ def _one_line_required(value: str, field: str) -> str:
 
 
 def _is_projection_binary(path: str) -> bool:
-    return path in {"wiki.db", "wiki.db.tmp"} or (
+    return path in {
+        "wiki.db",
+        "wiki.db-shm",
+        "wiki.db-wal",
+        "wiki.db.tmp",
+        "wiki.db.tmp-shm",
+        "wiki.db.tmp-wal",
+    } or (
         path.startswith("db_versions/") and path.endswith(".db")
     )
 
