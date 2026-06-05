@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,92 @@ def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
     assert log["items"]
     assert log["pagination"]["total"] >= len(log["items"])
     assert all(item["author_kind"] == "agent" for item in log["items"])
+
+
+def test_global_and_scoped_search_rank_visibility_and_click_payload(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hermes_wiki.tools import wiki_create_page
+
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    dense = wiki_create_page(
+        title="Dense Rank Beacon",
+        body="# Dense Rank Beacon\n\nrankbeacon rankbeacon rankbeacon rankbeacon rankbeacon.",
+        type="concept",
+        tags=["memory"],
+        sources=[],
+    )
+    assert isinstance(dense, dict)
+
+    asyncio.run(
+        plugin_api.create_wiki(
+            plugin_api.CreateWikiRequest(slug="second-visible", domain="Search test wiki")
+        )
+    )
+    monkeypatch.setenv("HERMES_WIKI", "second-visible")
+    sparse = wiki_create_page(
+        title="Sparse Rank Beacon",
+        body="# Sparse Rank Beacon\n\nrankbeacon.",
+        type="concept",
+        tags=["memory"],
+        sources=[],
+    )
+    assert isinstance(sparse, dict)
+
+    global_results = plugin_api.global_search(q="rankbeacon", limit=10)
+    assert global_results["query"] == "rankbeacon"
+    assert {row["wiki"] for row in global_results["results"]} >= {
+        "ai-tooling",
+        "second-visible",
+    }
+    assert global_results["results"][0]["id"] == dense["id"]
+    assert {
+        "wiki",
+        "id",
+        "title",
+        "rank",
+        "score",
+        "href",
+    } <= set(global_results["results"][0])
+    assert "private-lab" not in json.dumps(global_results)
+    assert "ungodly-economy" not in json.dumps(global_results)
+
+    scoped = plugin_api.search("second-visible", q="rankbeacon", limit=10)
+    assert scoped["results"]
+    assert {row["wiki"] for row in scoped["results"]} == {"second-visible"}
+
+    empty = plugin_api.global_search(q="no-such-dashboard-term", limit=10)
+    assert empty["results"] == []
+
+
+def test_inbox_reclassify_override_persists(plugin_api: Any) -> None:
+    before = plugin_api.get_inbox("ai-tooling")
+    unknown = next(row for row in before if row["filename"] == "unknown-sample.dat")
+    assert unknown["classifier"] == "unknown"
+
+    updated = plugin_api.reclassify_inbox_item(
+        "ai-tooling",
+        "unknown-sample.dat",
+        plugin_api.InboxClassifyRequest(classifier="article"),
+    )
+
+    assert updated["filename"] == "unknown-sample.dat"
+    assert updated["classifier"] == "article"
+    assert updated["status"] == "override"
+
+    after = plugin_api.get_inbox("ai-tooling")
+    overridden = next(row for row in after if row["filename"] == "unknown-sample.dat")
+    assert overridden["classifier"] == "article"
+    assert overridden["status"] == "override"
+
+    status_path = Path(plugin_api.get_wiki("ai-tooling")["path"]) / "raw" / "inbox_status.json"
+    statuses = json.loads(status_path.read_text(encoding="utf-8"))
+    assert statuses["unknown-sample.dat"]["classified_as"] == "article"
+    assert statuses["unknown-sample.dat"]["status"] == "override"
+
+    oversized = next(row for row in after if row["filename"] == "oversized-sample.bin")
+    assert oversized["status"] == "oversized"
 
 
 def test_create_archive_ingest_and_delete_are_non_destructive(

@@ -256,7 +256,15 @@ def ingest_inbox(
             )
             results.append(result)
             continue
-        label = classify_source(source.name, source.content, wiki_root=resolved.path)
+        recorded = _load_inbox_status(resolved.path).get(inbox_path.name, {})
+        override = str(recorded.get("classified_as") or "").strip()
+        label = (
+            _forced_label(override)
+            if str(recorded.get("status") or "") == "override" and override
+            else classify_source(source.name, source.content, wiki_root=resolved.path)
+        )
+        if label is None:
+            label = classify_source(source.name, source.content, wiki_root=resolved.path)
         if label.name == "unknown":
             result = _record_inbox_attempt(
                 resolved.path,
@@ -282,6 +290,82 @@ def ingest_inbox(
         _clear_inbox_status(resolved.path, inbox_path.name)
         results.append(replace(result, message=inbox_path.name))
     return results
+
+
+def set_inbox_classification(
+    *,
+    wiki: str | None,
+    filename: str,
+    classifier: str,
+    author: str | None = None,
+    author_kind: str | None = None,
+) -> dict[str, object]:
+    """Persist a manual classifier override for one pending inbox file."""
+
+    try:
+        resolved = ensure_wiki_mutable(slug=wiki)
+    except WikiManagementError as exc:
+        raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+    clean_filename = _clean_inbox_filename(filename)
+    label = _forced_label(classifier)
+    if label is None:
+        raise IngestError("classifier is required")
+    inbox_path = resolved.path / "raw" / "inbox" / clean_filename
+    if not inbox_path.is_file():
+        raise IngestError("inbox file not found")
+    if inbox_path.stat().st_size > MAX_INGEST_BYTES:
+        raise IngestError("oversized inbox files cannot be re-classified")
+
+    acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
+    now = _utc_now()
+    relpath = inbox_path.relative_to(resolved.path).as_posix()
+    digest = hashlib.sha256(inbox_path.read_bytes()).hexdigest()
+    status_path = resolved.path / INBOX_STATUS_REL
+    log_path = resolved.path / "log.md"
+    touched: dict[Path, bytes | None] = {}
+    _remember(touched, status_path)
+    _remember(touched, log_path)
+    try:
+        statuses = _load_inbox_status(resolved.path)
+        statuses[clean_filename] = {
+            "status": "override",
+            "classified_as": label.name,
+            "last_attempted_at": now,
+            "overridden_at": now,
+            "path": relpath,
+            "sha256": digest,
+        }
+        _write_inbox_status(resolved.path, statuses)
+        append_log_entry(
+            resolved.path,
+            timestamp=now,
+            action="inbox-override",
+            target=relpath,
+            author=acting_author,
+            author_kind=acting_kind,
+            details={"source": relpath, "class": label.name},
+        )
+        commit = git_ops.commit_change(
+            resolved.path,
+            action="inbox",
+            what=f"override {clean_filename} -> {label.name}",
+            author=acting_author,
+        )
+    except Exception:
+        _restore(touched)
+        raise
+    return {
+        "wiki": resolved.slug,
+        "name": clean_filename,
+        "path": relpath,
+        "status": "override",
+        "suggested_class": label.name,
+        "last_classification": label.name,
+        "last_attempted_at": now,
+        "size_bytes": inbox_path.stat().st_size,
+        "commit_id": commit.commit_id,
+    }
 
 
 def _ingest_source_content(
@@ -724,6 +808,15 @@ def _forced_label(classifier: str | None) -> ClassLabel | None:
     if "\n" in clean or "\r" in clean or "/" in clean or "\\" in clean:
         raise IngestError("invalid classifier")
     return ClassLabel(name=clean, confidence="forced", reason="agent-forced")
+
+
+def _clean_inbox_filename(filename: str) -> str:
+    clean = filename.strip()
+    if not clean:
+        raise IngestError("filename is required")
+    if Path(clean).name != clean or "/" in clean or "\\" in clean:
+        raise IngestError("invalid inbox filename")
+    return clean
 
 
 def _trusted_processor_for_label(wiki_root: Path, label_name: str) -> Processor | None:

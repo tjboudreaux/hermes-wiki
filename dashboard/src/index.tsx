@@ -55,6 +55,36 @@ type PageListResponse = {
   filters: { type?: string | null; tag?: string | null };
 };
 
+type SearchResult = {
+  wiki: string;
+  id: string;
+  title?: string | null;
+  type?: string | null;
+  tags?: string[];
+  snippet?: string | null;
+  rank?: number;
+  score?: number;
+  href?: string | null;
+};
+
+type SearchResponse = {
+  wiki?: string | null;
+  query: string;
+  results: SearchResult[];
+};
+
+type InboxItem = {
+  filename: string;
+  name: string;
+  path: string;
+  status: string;
+  classifier: string;
+  suggested_class?: string | null;
+  last_classification?: string | null;
+  last_attempted_at?: string | null;
+  size_bytes: number;
+};
+
 type ActivityEntry = {
   timestamp?: string | null;
   created?: string | null;
@@ -167,6 +197,18 @@ if (SDK && window.__HERMES_PLUGINS__) {
 
   function pathForPage(slug: string, pageId: string) {
     return `${pathForWiki(slug)}/${encodePageId(pageId)}`;
+  }
+
+  function pathForInbox(slug: string) {
+    return `${pathForWiki(slug)}/inbox`;
+  }
+
+  function pathForSearch(query = "", wiki = "") {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (wiki.trim()) params.set("wiki", wiki.trim());
+    const suffix = params.toString();
+    return `/wikis/search${suffix ? `?${suffix}` : ""}`;
   }
 
   function encodePageId(pageId: string) {
@@ -308,6 +350,7 @@ if (SDK && window.__HERMES_PLUGINS__) {
       h(
         "div",
         { className: "hermes-wiki-toolbar" },
+        h("a", { className: "hermes-wiki-action-link", href: pathForSearch(), onClick: onNavigate(pathForSearch()) }, "Global Search"),
         h(Input, {
           "aria-label": "Filter Wikis",
           placeholder: "Filter Wikis…",
@@ -396,6 +439,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
         h(
           "div",
           { className: "hermes-wiki-health-panel" },
+          h("a", { className: "hermes-wiki-action-link", href: pathForSearch("", summary.slug), onClick: onNavigate(pathForSearch("", summary.slug)) }, "Search this Wiki"),
+          h("a", { className: "hermes-wiki-action-link", href: pathForInbox(summary.slug), onClick: onNavigate(pathForInbox(summary.slug)) }, "Inbox"),
           h(Badge, { className: `hermes-wiki-health hermes-wiki-health-${healthTone(score)}` }, `Health ${formatScore(score)}`),
           h("span", null, `${summary.page_count} pages`),
           h("span", null, `Last ingest ${relativeTime(summary.last_ingest)}`),
@@ -762,6 +807,279 @@ if (SDK && window.__HERMES_PLUGINS__) {
     return h("div", { className: "hermes-wiki-markdown" }, ...renderMarkdownBlocks(props.markdown, props.slug, props.pageId));
   }
 
+  function SearchRoute(props: { query: string; scope: string }) {
+    const [wikis, setWikis] = useState<WikiSummary[]>([]);
+    const [query, setQuery] = useState<string>(props.query);
+    const [scope, setScope] = useState<string>(props.scope);
+    const [results, setResults] = useState<SearchResult[]>([]);
+    const [loading, setLoading] = useState<boolean>(false);
+    const [error, setError] = useState<string>("");
+
+    useEffect(() => {
+      setQuery(props.query);
+      setScope(props.scope);
+    }, [props.query, props.scope]);
+
+    useEffect(() => {
+      SDK.fetchJSON<WikiSummary[]>("/api/plugins/wiki/wikis")
+        .then((rows) => setWikis(Array.isArray(rows) ? rows : []))
+        .catch(() => setWikis([]));
+    }, []);
+
+    const load = useCallback(() => {
+      const trimmed = props.query.trim();
+      setError("");
+      if (!trimmed) {
+        setResults([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      const params = new URLSearchParams({ q: trimmed, limit: "20" });
+      const url = props.scope
+        ? `/api/plugins/wiki/wikis/${encodeURIComponent(props.scope)}/search?${params.toString()}`
+        : `/api/plugins/wiki/search?${params.toString()}`;
+      SDK.fetchJSON<SearchResponse>(url)
+        .then((row) => setResults(Array.isArray(row.results) ? row.results : []))
+        .catch((err) => setError(messageOf(err)))
+        .finally(() => setLoading(false));
+    }, [props.query, props.scope]);
+
+    useEffect(() => {
+      load();
+    }, [load]);
+
+    const submit = (event: Event) => {
+      event.preventDefault();
+      navigatePath(pathForSearch(query, scope));
+    };
+
+    return h(
+      "main",
+      { className: "hermes-wiki" },
+      h(BackLink, { href: "/wikis", label: "← All Wikis" }),
+      h(
+        "header",
+        { className: "hermes-wiki-detail-hero" },
+        h(
+          "div",
+          null,
+          h("p", { className: "hermes-wiki-eyebrow" }, "Wiki Search"),
+          h("h1", null, "Search Wikis"),
+          h("p", { className: "hermes-wiki-domain" }, scope ? `Scoped to ${scope}` : "Across all visible Wikis"),
+        ),
+        h(Badge, null, props.query ? `${results.length} results` : "BM25 ranked"),
+      ),
+      h(
+        "form",
+        { className: "hermes-wiki-search-form", onSubmit: submit },
+        h(Input, {
+          "aria-label": "Search query",
+          placeholder: "Search pages…",
+          value: query,
+          onChange: (event: Event) => setQuery((event.target as HTMLInputElement).value),
+        }),
+        h(
+          "select",
+          {
+            "aria-label": "Search scope",
+            value: scope,
+            onChange: (event: Event) => setScope((event.target as HTMLSelectElement).value),
+          },
+          h("option", { value: "" }, "All visible Wikis"),
+          ...wikis.map((wiki) => h("option", { key: wiki.slug, value: wiki.slug }, wiki.slug)),
+        ),
+        h(Button, { type: "submit" }, "Search"),
+      ),
+      loading
+        ? h(LoadingState, { label: "Searching Wikis…" })
+        : error
+          ? h(ErrorState, { title: "Search failed", message: error, onRetry: load })
+          : !props.query.trim()
+            ? h(EmptyState, { title: "Search all visible Wikis", body: "Enter a term to search Wiki pages with BM25 ranking." })
+            : results.length
+              ? h("section", { className: "hermes-wiki-result-list" }, ...results.map((result) => h(SearchResultRow, { key: `${result.wiki}:${result.id}`, result })))
+              : h(EmptyState, { title: "No results", body: "No visible Wiki pages matched that query." }),
+    );
+  }
+
+  function SearchResultRow(props: { result: SearchResult }) {
+    const result = props.result;
+    const href = result.href || pathForPage(result.wiki, result.id);
+    return h(
+      "a",
+      {
+        className: "hermes-wiki-result-row",
+        href,
+        onClick: onNavigate(href),
+        "data-search-result": `${result.wiki}:${result.id}`,
+      },
+      h(
+        Card,
+        null,
+        h(
+          CardHeader,
+          { className: "hermes-wiki-card-header" },
+          h(CardTitle, null, result.title || result.id),
+          h("div", { className: "hermes-wiki-tags" }, h(Badge, null, result.wiki), h(Badge, null, result.type || "page")),
+        ),
+        h(
+          CardContent,
+          null,
+          h("p", null, result.snippet || result.id),
+          h("small", { className: "hermes-wiki-muted" }, `BM25 rank ${Number(result.rank || result.score || 0).toFixed(4)}`),
+        ),
+      ),
+    );
+  }
+
+  function InboxRoute(props: { slug: string }) {
+    const [summary, setSummary] = useState<WikiSummary | null>(null);
+    const [items, setItems] = useState<InboxItem[]>([]);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string>("");
+    const [busyFile, setBusyFile] = useState<string>("");
+
+    const load = useCallback(() => {
+      setLoading(true);
+      setError("");
+      Promise.all([
+        SDK.fetchJSON<WikiSummary>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
+        SDK.fetchJSON<InboxItem[]>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/inbox`),
+      ])
+        .then(([wikiRow, inboxRows]) => {
+          setSummary(wikiRow);
+          setItems(Array.isArray(inboxRows) ? inboxRows : []);
+        })
+        .catch((err) => setError(messageOf(err)))
+        .finally(() => setLoading(false));
+    }, [props.slug]);
+
+    useEffect(() => {
+      load();
+    }, [load]);
+
+    const overrideClassifier = (filename: string, classifier: string) => {
+      setBusyFile(filename);
+      setError("");
+      SDK.fetchJSON<InboxItem>(
+        `/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/inbox/${encodeURIComponent(filename)}/classify`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ classifier }),
+        },
+      )
+        .then((updated) => {
+          setItems((previous) => previous.map((item) => (item.filename === updated.filename ? updated : item)));
+        })
+        .catch((err) => setError(messageOf(err)))
+        .finally(() => setBusyFile(""));
+    };
+
+    if (loading) return h(LoadingState, { label: "Loading Inbox…" });
+    if (error && !items.length) {
+      if (isNotFound(error)) {
+        return h(
+          "main",
+          { className: "hermes-wiki" },
+          h(BackLink, { href: pathForWiki(props.slug), label: "← Back to Wiki" }),
+          h(ErrorState, { title: "Inbox not found", message: "This Wiki inbox was not found or is not visible." }),
+        );
+      }
+      return h(ErrorState, { title: "Failed to load Inbox", message: error, onRetry: load });
+    }
+
+    return h(
+      "main",
+      { className: "hermes-wiki" },
+      h(BackLink, { href: pathForWiki(props.slug), label: "← Back to Wiki" }),
+      h(
+        "header",
+        { className: "hermes-wiki-detail-hero" },
+        h(
+          "div",
+          null,
+          h("p", { className: "hermes-wiki-eyebrow" }, "Wiki Inbox"),
+          h("h1", null, `${summary?.slug || props.slug} Inbox`),
+          h("p", { className: "hermes-wiki-domain" }, "Unprocessed raw files and classifier assignments"),
+        ),
+        h(Badge, null, `${items.length} pending`),
+      ),
+      error ? h(ErrorState, { title: "Inbox update failed", message: error, onRetry: load }) : null,
+      items.length
+        ? h(
+            "section",
+            { className: "hermes-wiki-inbox-list" },
+            ...items.map((item) =>
+              h(InboxItemRow, {
+                key: item.filename,
+                item,
+                busy: busyFile === item.filename,
+                onOverride: overrideClassifier,
+              }),
+            ),
+          )
+        : h(EmptyState, { title: "Inbox is empty", body: "There are no unprocessed files in raw/inbox for this Wiki." }),
+    );
+  }
+
+  function InboxItemRow(props: { item: InboxItem; busy: boolean; onOverride: (filename: string, classifier: string) => void }) {
+    const item = props.item;
+    const oversized = item.status === "oversized" || item.classifier === "oversized";
+    const classes = ["article", "paper", "transcript", "unknown"];
+    return h(
+      Card,
+      { className: oversized ? "hermes-wiki-inbox-item hermes-wiki-inbox-oversized" : "hermes-wiki-inbox-item" },
+      h(
+        CardHeader,
+        { className: "hermes-wiki-card-header" },
+        h(
+          "div",
+          null,
+          h(CardTitle, null, item.filename),
+          h("p", { className: "hermes-wiki-muted" }, item.path),
+        ),
+        h("div", { className: "hermes-wiki-tags" }, h(Badge, null, item.classifier || "unknown"), h(Badge, { className: oversized ? "hermes-wiki-health-bad" : "" }, item.status)),
+      ),
+      h(
+        CardContent,
+        null,
+        h("p", null, `Current classifier: ${item.classifier || "unknown"}. Status: ${item.status || "unknown"}.`),
+        h("p", null, `${formatBytes(item.size_bytes)} · Last updated ${relativeTime(item.last_attempted_at)}`),
+        oversized
+          ? h("p", { className: "hermes-wiki-health-bad" }, "Oversized: this file exceeds the 50MB Phase-1 ingest cap and is not processable yet.")
+          : h(
+              "div",
+              { className: "hermes-wiki-override-row", "aria-label": `Re-classify ${item.filename}` },
+              ...classes.map((classifier) =>
+                h(
+                  Button,
+                  {
+                    key: classifier,
+                    disabled: props.busy || item.classifier === classifier,
+                    onClick: () => props.onOverride(item.filename, classifier),
+                  },
+                  item.classifier === classifier ? `${classifier} ✓` : `Set ${classifier}`,
+                ),
+              ),
+            ),
+      ),
+    );
+  }
+
+  function formatBytes(value: number) {
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let amount = value;
+    let unit = 0;
+    while (amount >= 1024 && unit < units.length - 1) {
+      amount /= 1024;
+      unit += 1;
+    }
+    return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+  }
+
   function renderMarkdownBlocks(markdown: string, slug: string, pageId: string) {
     const lines = markdown.split(/\r?\n/);
     const blocks: unknown[] = [];
@@ -859,19 +1177,28 @@ if (SDK && window.__HERMES_PLUGINS__) {
     return parts.join("/");
   }
 
-  function parseRoute(pathname: string) {
-    const parts = pathname.replace(/^\/wikis\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  function parseRoute(locationPath: string) {
+    const url = new URL(locationPath, window.location.origin);
+    const parts = url.pathname.replace(/^\/wikis\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
     if (!parts.length || parts[0] === "*") return { kind: "landing" as const };
+    if (parts[0] === "search") {
+      return {
+        kind: "search" as const,
+        query: url.searchParams.get("q") || "",
+        scope: url.searchParams.get("wiki") || "",
+      };
+    }
     const [slug, ...pageParts] = parts;
     if (!pageParts.length) return { kind: "wiki" as const, slug };
+    if (pageParts.length === 1 && pageParts[0] === "inbox") return { kind: "inbox" as const, slug };
     return { kind: "page" as const, slug, pageId: pageParts.join("/") };
   }
 
   function WikiDashboard() {
-    const [path, setPath] = useState<string>(window.location.pathname);
+    const [path, setPath] = useState<string>(window.location.pathname + window.location.search);
 
     useEffect(() => {
-      const onPopState = () => setPath(window.location.pathname);
+      const onPopState = () => setPath(window.location.pathname + window.location.search);
       window.addEventListener("popstate", onPopState);
       return () => window.removeEventListener("popstate", onPopState);
     }, []);
@@ -885,7 +1212,9 @@ if (SDK && window.__HERMES_PLUGINS__) {
 
     const route = parseRoute(path);
     if (route.kind === "landing") return h(LandingRoute, { key: "landing" });
+    if (route.kind === "search") return h(SearchRoute, { key: `search-${route.query}-${route.scope}`, query: route.query, scope: route.scope });
     if (route.kind === "wiki") return h(WikiRoute, { key: `wiki-${route.slug}`, slug: route.slug });
+    if (route.kind === "inbox") return h(InboxRoute, { key: `inbox-${route.slug}`, slug: route.slug });
     return h(PageRoute, { key: `page-${route.slug}-${route.pageId}`, slug: route.slug, pageId: route.pageId });
   }
 

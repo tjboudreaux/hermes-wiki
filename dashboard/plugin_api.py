@@ -30,7 +30,7 @@ from hermes_wiki.management import (
     create_wiki as core_create_wiki,
 )
 from hermes_wiki.navigation import WikiNavigationError, validate_page_id
-from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source
+from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, set_inbox_classification
 from hermes_wiki.search import search_wiki
 from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki, visible_wikis
 
@@ -52,11 +52,43 @@ class IngestRequest(BaseModel):
     classifier: str | None = None
 
 
+class InboxClassifyRequest(BaseModel):
+    """Payload for overriding an inbox file's classifier assignment."""
+
+    classifier: str
+
+
 @router.get("/wikis")
 def list_wikis() -> list[dict[str, Any]]:
     """Return visible Wiki metadata only."""
 
     return [_wiki_row(row) for row in visible_wikis()]
+
+
+@router.get("/search")
+def global_search(q: str, limit: int = 10, wiki: str | None = None) -> dict[str, Any]:
+    """Search all visible Wikis, or one visible Wiki when scoped."""
+
+    safe_limit = max(1, min(limit, 50))
+    if wiki:
+        return search(wiki, q=q, limit=safe_limit)
+
+    results: list[dict[str, Any]] = []
+    for row in visible_wikis():
+        slug = str(row.get("slug") or "")
+        if not slug:
+            continue
+        try:
+            wiki_rows = search_wiki(q, wiki=slug, limit=safe_limit)
+        except WikiManagementError:
+            continue
+        results.extend(_search_row(search_row, wiki=slug) for search_row in wiki_rows)
+    results.sort(key=lambda row: (float(row.get("rank") or 0.0), str(row["wiki"]), str(row["id"])))
+    return {
+        "wiki": None,
+        "query": q,
+        "results": results[:safe_limit],
+    }
 
 
 @router.get("/wikis/{slug}")
@@ -163,7 +195,7 @@ def search(slug: str, q: str, limit: int = 10) -> dict[str, Any]:
     return {
         "wiki": slug,
         "query": q,
-        "results": [_search_row(row) for row in rows],
+        "results": [_search_row(row, wiki=slug) for row in rows],
     }
 
 
@@ -224,6 +256,27 @@ def get_inbox(slug: str) -> list[dict[str, Any]]:
     if isinstance(rows, str):
         raise _not_visible()
     return [_inbox_row(row, wiki_root) for row in rows]
+
+
+@router.post("/wikis/{slug}/inbox/{filename}/classify")
+def reclassify_inbox_item(
+    slug: str,
+    filename: str,
+    payload: InboxClassifyRequest,
+) -> dict[str, Any]:
+    """Persist a manual classifier override for one inbox file."""
+
+    _slug, wiki_root = _require_visible(slug)
+    try:
+        row = set_inbox_classification(
+            wiki=slug,
+            filename=filename,
+            classifier=payload.classifier,
+            author_kind="human",
+        )
+    except IngestError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _inbox_row(row, wiki_root)
 
 
 @router.get("/wikis/{slug}/health")
@@ -365,9 +418,11 @@ def _page_list_row(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _search_row(row: Mapping[str, Any]) -> dict[str, Any]:
+def _search_row(row: Mapping[str, Any], *, wiki: str) -> dict[str, Any]:
     rank = float(row.get("rank") or 0.0)
+    page_id = str(row.get("id") or "")
     return {
+        "wiki": wiki,
         "id": row.get("id"),
         "title": row.get("title"),
         "type": row.get("type"),
@@ -375,6 +430,7 @@ def _search_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "snippet": row.get("context") or row.get("snippet") or "",
         "rank": rank,
         "score": rank,
+        "href": f"/wikis/{wiki}/{page_id}",
     }
 
 

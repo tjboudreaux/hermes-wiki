@@ -23,6 +23,19 @@
   max-width: 24rem;
 }
 
+.hermes-wiki-action-link {
+  border: 1px solid var(--border, #334155);
+  border-radius: 0.5rem;
+  color: var(--primary, #a78bfa);
+  padding: 0.5rem 0.75rem;
+  text-decoration: none;
+}
+
+.hermes-wiki-action-link:hover,
+.hermes-wiki-action-link:focus-visible {
+  border-color: var(--primary, #8b5cf6);
+}
+
 .hermes-wiki-eyebrow {
   color: var(--muted-foreground, #94a3b8);
   font-size: 0.75rem;
@@ -182,6 +195,55 @@
   padding: 0.55rem 0.75rem;
 }
 
+.hermes-wiki-search-form {
+  align-items: center;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 18rem) auto;
+  margin-bottom: 1rem;
+}
+
+.hermes-wiki-search-form select {
+  background: var(--background, #0f172a);
+  border: 1px solid var(--border, #334155);
+  border-radius: 0.5rem;
+  color: inherit;
+  padding: 0.55rem 0.75rem;
+}
+
+.hermes-wiki-result-list,
+.hermes-wiki-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.hermes-wiki-result-row {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hermes-wiki-result-row:hover section,
+.hermes-wiki-result-row:focus-visible section {
+  border-color: var(--primary, #8b5cf6);
+}
+
+.hermes-wiki-inbox-item {
+  border-color: var(--border, #334155);
+}
+
+.hermes-wiki-inbox-oversized {
+  border-color: color-mix(in srgb, var(--destructive, #ef4444) 45%, var(--border, #334155));
+}
+
+.hermes-wiki-override-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
 .hermes-wiki-page-list {
   display: flex;
   flex-direction: column;
@@ -320,5 +382,9 @@
   .hermes-wiki-toolbar input {
     max-width: none;
     width: 100%;
+  }
+
+  .hermes-wiki-search-form {
+    grid-template-columns: 1fr;
   }
 }
