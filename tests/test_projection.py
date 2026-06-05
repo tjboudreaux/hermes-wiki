@@ -138,6 +138,33 @@ def test_successful_rebuild_snapshots_manifest_versions_and_atomically_swaps(
     assert "!db_versions/manifest.jsonl\n" in gitignore
 
 
+def test_rebuild_reprojects_source_rows_from_page_frontmatter_without_prior_db(
+    tmp_path: Path,
+) -> None:
+    """A missing projection rebuild keeps source metadata derived from durable files."""
+
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+    raw_source = wiki_root / "raw" / "articles" / "memory.md"
+    raw_source.parent.mkdir(parents=True)
+    raw_source.write_text("# Memory\n\nSource bytes.", encoding="utf-8")
+    _write_page(wiki_root / "concepts" / "agent-memory.md")
+
+    result = projection.rebuild_projection(wiki_root, rebuild_reason="initial")
+
+    assert result.status == "active"
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        conn.row_factory = sqlite3.Row
+        source = conn.execute("SELECT * FROM sources").fetchone()
+    assert source is not None
+    assert source["id"] == "raw/articles/memory.md"
+    assert source["source_path"] == "raw/articles/memory.md"
+    assert source["classified_as"] == "article"
+    assert source["version"] == 1
+    assert source["is_latest"] == 1
+    assert source["sha256"] == projection.sha256_file(raw_source)
+
+
 def test_failed_validation_retains_prior_db_and_records_failed_version(tmp_path: Path) -> None:
     """Validation failures keep the prior projection current and append a failed version row."""
     wiki_root = tmp_path / "wiki"

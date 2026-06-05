@@ -71,6 +71,29 @@ def test_wiki_slash_mutating_ingest_respects_write_grant(
     assert _ingest_log_count(fixture.primary_wiki_root) == before + 1
 
 
+def test_wiki_slash_create_page_respects_write_grant(monkeypatch: Any, tmp_path: Path) -> None:
+    fixture = build_test_wiki(tmp_path)
+    monkeypatch.setenv("HERMES_HOME", str(fixture.home))
+    monkeypatch.delenv("HERMES_WIKI", raising=False)
+
+    from hermes_wiki.slash import run_slash
+
+    command = (
+        "create-page 'Slash Notes' --body '# Slash Notes' "
+        f"--type concept --wiki {fixture.primary_slug}"
+    )
+    denied = run_slash(command)
+
+    assert denied.strip() == "wiki write permission denied"
+    assert not (fixture.primary_wiki_root / "concepts" / "slash-notes.md").exists()
+
+    monkeypatch.setenv("HERMES_WIKI", fixture.primary_slug)
+    allowed = run_slash(command)
+
+    assert "concepts/slash-notes" in allowed
+    assert (fixture.primary_wiki_root / "concepts" / "slash-notes.md").is_file()
+
+
 class RecordingPluginContext:
     def __init__(self) -> None:
         self.commands: dict[str, dict[str, Any]] = {}

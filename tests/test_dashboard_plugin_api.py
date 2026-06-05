@@ -61,6 +61,12 @@ def test_wiki_subroutes_deny_invisible_and_archived_without_disclosure(plugin_ap
 
 
 def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
+    home = Path(plugin_api.get_wiki("ai-tooling")["path"]).parents[1]
+    (home / "kanban_tasks.json").write_text(
+        json.dumps({"KB-123": {"id": "KB-123", "title": "Preserved task"}}),
+        encoding="utf-8",
+    )
+
     pages = plugin_api.list_pages("ai-tooling", page_type="concept", tag="memory")
     assert pages["pagination"]["total"] >= 1
     assert all(item["type"] == "concept" for item in pages["items"])
@@ -78,6 +84,10 @@ def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
         for link in page["inbound_pages"]
     )
     assert isinstance(page["kanban_refs"], list)
+    assert any(
+        ref["task_id"] == "KB-123" and ref["task_title"] == "Preserved task"
+        for ref in page["kanban_refs"]
+    )
     assert isinstance(page["history"], list)
 
     results = plugin_api.search("ai-tooling", q="memory")
@@ -221,10 +231,14 @@ def test_global_and_scoped_search_rank_visibility_and_click_payload(
     assert empty["results"] == []
 
 
-def test_inbox_reclassify_override_persists(plugin_api: Any) -> None:
+def test_inbox_reclassify_override_persists(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     before = plugin_api.get_inbox("ai-tooling")
     unknown = next(row for row in before if row["filename"] == "unknown-sample.dat")
     assert unknown["classifier"] == "unknown"
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
 
     updated = plugin_api.reclassify_inbox_item(
         "ai-tooling",
@@ -253,12 +267,14 @@ def test_inbox_reclassify_override_persists(plugin_api: Any) -> None:
 def test_create_archive_ingest_and_delete_are_non_destructive(
     plugin_api: Any,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created = asyncio.run(
         plugin_api.create_wiki(plugin_api.CreateWikiRequest(slug="dashboard-created", domain="UI"))
     )
     assert created["slug"] == "dashboard-created"
     assert any(row["slug"] == "dashboard-created" for row in plugin_api.list_wikis())
+    monkeypatch.setenv("HERMES_WIKI", "dashboard-created")
 
     source = tmp_path / "source.md"
     source.write_text(
@@ -282,3 +298,45 @@ def test_create_archive_ingest_and_delete_are_non_destructive(
     refused = asyncio.run(plugin_api.delete_wiki("dashboard-created", confirm=False))
     assert refused["status"] == "refused"
     assert wiki_dir.is_dir()
+
+
+def test_dashboard_existing_wiki_mutations_require_write_grant(
+    plugin_api: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hermes_wiki import db
+
+    source = tmp_path / "dashboard-denied.md"
+    source.write_text(
+        "# Dashboard Denied\n\nDashboard denied mutation unique term.",
+        encoding="utf-8",
+    )
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
+        before = conn.execute("SELECT COUNT(*) FROM ingest_log").fetchone()[0]
+
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(
+            plugin_api.ingest(
+                "ai-tooling",
+                plugin_api.IngestRequest(path_or_url=str(source)),
+            )
+        )
+
+    assert denied.value.status_code == 403
+    assert denied.value.detail == "wiki write permission denied"
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
+        after = conn.execute("SELECT COUNT(*) FROM ingest_log").fetchone()[0]
+    assert after == before
+
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    allowed = asyncio.run(
+        plugin_api.ingest(
+            "ai-tooling",
+            plugin_api.IngestRequest(path_or_url=str(source)),
+        )
+    )
+
+    assert allowed["status"] == "ok"
+    assert allowed["result"]["pages_created"]

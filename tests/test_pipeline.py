@@ -17,7 +17,8 @@ from hermes_wiki_cli.cli import main
 
 
 def _run_cli(tmp_path: Path, *argv: str, env: dict[str, str] | None = None) -> int:
-    merged = {"HERMES_HOME": str(tmp_path), "USER": "ingest-tester", **(env or {})}
+    inferred = _grant_env_from_argv(argv) if env is None or "HERMES_WIKI" not in env else {}
+    merged = {"HERMES_HOME": str(tmp_path), "USER": "ingest-tester", **inferred, **(env or {})}
     old = os.environ.copy()
     try:
         os.environ.clear()
@@ -26,6 +27,15 @@ def _run_cli(tmp_path: Path, *argv: str, env: dict[str, str] | None = None) -> i
     finally:
         os.environ.clear()
         os.environ.update(old)
+
+
+def _grant_env_from_argv(argv: tuple[str, ...]) -> dict[str, str]:
+    if "--wiki" not in argv:
+        return {}
+    index = argv.index("--wiki")
+    if index + 1 >= len(argv):
+        return {}
+    return {"HERMES_WIKI": argv[index + 1]}
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -613,6 +623,37 @@ def test_ingest_cross_links_existing_page_and_increments_inbound_links(tmp_path:
     )
 
 
+def test_ingest_update_preserves_existing_kanban_refs(tmp_path: Path, monkeypatch) -> None:
+    """Updating an existing page through ingest must not drop canonical kanban refs."""
+
+    from fixtures import build_populated_home
+    from hermes_wiki import db
+    from hermes_wiki.frontmatter import read_markdown
+    from hermes_wiki.pipeline import ingest_source
+
+    fixture = build_populated_home(tmp_path / "home")
+    monkeypatch.setenv("HERMES_HOME", str(fixture.home))
+
+    page_path = fixture.primary_wiki_root / "concepts" / "agent-memory.md"
+    before_frontmatter, _before_body = read_markdown(page_path)
+    assert any(ref["task_id"] == "KB-123" for ref in before_frontmatter["kanban_refs"])
+
+    source = tmp_path / "agent-memory-update.md"
+    source.write_text(
+        "# Agent Memory\n\nAn article update about durable agent memory and Hermes.",
+        encoding="utf-8",
+    )
+
+    result = ingest_source(str(source), wiki=fixture.primary_slug)
+
+    assert "concepts/agent-memory" in result.pages_updated
+    after_frontmatter, _after_body = read_markdown(page_path)
+    assert any(ref["task_id"] == "KB-123" for ref in after_frontmatter["kanban_refs"])
+    with db.connect_wiki(fixture.primary_wiki_db) as conn:
+        refs = db.list_kanban_refs(conn, page_id="concepts/agent-memory")
+    assert any(ref["task_id"] == "KB-123" for ref in refs)
+
+
 def test_single_source_ingest_rolls_back_on_processor_failure(tmp_path: Path) -> None:
     """Processor failure leaves no page files, rows, or uncommitted durable artifacts."""
     assert _run_cli(tmp_path, "create", "ai-tooling") == 0
@@ -695,6 +736,35 @@ def test_ingest_without_source_refuses_and_does_not_process_inbox(
     with sqlite3.connect(wiki_root / "wiki.db") as conn:
         assert conn.execute("SELECT count(*) FROM pages").fetchone() == (0,)
         assert conn.execute("SELECT count(*) FROM sources").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM ingest_log").fetchone() == (0,)
+
+
+def test_cli_ingest_requires_write_grant_for_visible_wiki(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """CLI mutation follows the same visible-then-write-grant boundary as tools."""
+
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    article = tmp_path / "article.md"
+    _write_article(article)
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    capsys.readouterr()
+
+    assert (
+        _run_cli(
+            tmp_path,
+            "ingest",
+            str(article),
+            "--wiki",
+            "ai-tooling",
+            env={"HERMES_WIKI": ""},
+        )
+        == 1
+    )
+
+    assert capsys.readouterr().err.strip() == "wiki write permission denied"
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
         assert conn.execute("SELECT count(*) FROM ingest_log").fetchone() == (0,)
 
 
@@ -1086,7 +1156,12 @@ def test_concurrent_cli_ingests_are_serialized_without_corruption(tmp_path: Path
     _write_article(first, title="Concurrent Alpha Article")
     _write_article(second, title="Concurrent Beta Article")
 
-    env = {**os.environ, "HERMES_HOME": str(tmp_path), "USER": "ingest-tester"}
+    env = {
+        **os.environ,
+        "HERMES_HOME": str(tmp_path),
+        "HERMES_WIKI": "ai-tooling",
+        "USER": "ingest-tester",
+    }
     cmd_a = [
         sys.executable,
         "-m",

@@ -29,7 +29,12 @@ from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors, s
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
-from hermes_wiki.tools import _create_or_update_page
+from hermes_wiki.tools import (
+    WRITE_PERMISSION_DENIED,
+    _check_wiki_write_mode,
+    _create_or_update_page,
+)
+from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
 
 
 def build_parser(
@@ -108,6 +113,8 @@ def wiki_command(args: argparse.Namespace) -> int:
             print(report.to_json())
             return 1 if report.status == "failed" else 0
         if verb == "ingest":
+            if not _require_write_grant(args.wiki):
+                return 1
             if args.inbox and args.source:
                 print("ingest accepts either <path|url> or --inbox, not both", file=sys.stderr)
                 return 1
@@ -167,6 +174,8 @@ def wiki_command(args: argparse.Namespace) -> int:
                 print(f"{row['id']}: {row['title']} type={row['type']} tags={tag_text}")
             return 0
         if verb == "create-page":
+            if not _require_write_grant(args.wiki, profile=args.profile):
+                return 1
             actor, actor_kind = resolve_actor(author=args.author, author_kind=args.author_kind)
             resolved = ensure_wiki_mutable(slug=args.wiki, profile=args.profile)
             result = _create_or_update_page(
@@ -197,6 +206,8 @@ def wiki_command(args: argparse.Namespace) -> int:
             _print_activity_log(args)
             return 0
         if verb == "link":
+            if not _require_write_grant(args.wiki):
+                return 1
             result = link_page_to_task(
                 args.page_id,
                 args.task_id,
@@ -216,6 +227,8 @@ def wiki_command(args: argparse.Namespace) -> int:
                 )
             return 0
         if verb == "unlink":
+            if not _require_write_grant(args.wiki):
+                return 1
             result = unlink_page_from_task(
                 args.page_id,
                 args.task_id,
@@ -319,6 +332,8 @@ def wiki_command(args: argparse.Namespace) -> int:
                         )
                     return 0
                 if args.plugins_command == "trust":
+                    if not _require_write_grant(args.wiki):
+                        return 1
                     result = trust_plugin(
                         kind=args.kind,
                         name=args.name,
@@ -331,6 +346,8 @@ def wiki_command(args: argparse.Namespace) -> int:
                     )
                     return 0
                 if args.plugins_command == "untrust":
+                    if not _require_write_grant(args.wiki):
+                        return 1
                     result = untrust_plugin(
                         name=args.name,
                         kind=args.kind,
@@ -589,6 +606,18 @@ def _print_activity_log(args: argparse.Namespace) -> None:
             f"{entry.timestamp} {entry.author_kind} {entry.author} "
             f"{entry.action} {entry.target} {entry.details}".rstrip()
         )
+
+
+def _require_write_grant(wiki: str | None, *, profile: str | None = None) -> bool:
+    try:
+        slug, _wiki_root = require_visible_wiki(wiki, profile=profile)
+    except WikiVisibilityError:
+        print("not found or not visible", file=sys.stderr)
+        return False
+    if not _check_wiki_write_mode(slug):
+        print(WRITE_PERMISSION_DENIED, file=sys.stderr)
+        return False
+    return True
 
 
 def _task_title_suffix(title: Any) -> str:

@@ -12,13 +12,13 @@ import re
 import tempfile
 import urllib.error
 import urllib.request
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 from hermes_wiki import db, git_ops, projection
@@ -1059,12 +1059,19 @@ def _write_or_merge_page(
     created = now
     sources = list(page.sources or (source_id,))
     links = list(page.links)
+    kanban_refs: list[dict[str, Any]] = []
     inbound_links = 0
     if path.exists():
         metadata, body = read_markdown(path)
         created = str(metadata.get("created") or now)
         existing_sources = [str(item) for item in _as_list(metadata.get("sources"))]
         existing_links = [str(item) for item in _as_list(metadata.get("links"))]
+        for item in _as_list(metadata.get("kanban_refs")):
+            if not isinstance(item, Mapping):
+                continue
+            ref = cast(Mapping[str, Any], item)
+            if ref.get("task_id"):
+                kanban_refs.append(dict(ref))
         for item in existing_sources:
             if item not in sources:
                 sources.append(item)
@@ -1075,7 +1082,7 @@ def _write_or_merge_page(
         body = _merge_body(body, page.body)
     else:
         body = page.body
-    metadata = {
+    metadata: dict[str, Any] = {
         "id": page.id,
         "title": page.title,
         "type": page.type,
@@ -1090,6 +1097,8 @@ def _write_or_merge_page(
         "links": links,
         "inbound_links": inbound_links,
     }
+    if kanban_refs:
+        metadata["kanban_refs"] = kanban_refs
     write_markdown(path, metadata, body)
 
 

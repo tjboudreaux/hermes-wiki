@@ -81,7 +81,7 @@ def _parse(argv: list[str]) -> tuple[argparse.Namespace | None, str]:
 
 def _requires_write_grant(args: argparse.Namespace) -> bool:
     verb = getattr(args, "wiki_command", None)
-    if verb == "ingest":
+    if verb in {"archive", "unarchive", "ingest", "create-page", "link", "unlink", "monitor"}:
         return True
     if verb == "plugins" and getattr(args, "plugins_command", None) in {"trust", "untrust"}:
         return True
@@ -89,7 +89,7 @@ def _requires_write_grant(args: argparse.Namespace) -> bool:
 
 
 def _target_wiki_for_write(args: argparse.Namespace) -> str | None:
-    return getattr(args, "wiki", None)
+    return getattr(args, "wiki", None) or getattr(args, "slug", None)
 
 
 def _run_cli(argv: list[str]) -> str:

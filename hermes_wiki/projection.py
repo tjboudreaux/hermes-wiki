@@ -323,6 +323,7 @@ def _build_tmp_projection(
                 body_text=page.body_text,
             )
             _project_kanban_refs_from_page(conn, page)
+        _project_sources_from_pages(conn, wiki_root, expected_pages)
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     return expected_pages
@@ -399,6 +400,63 @@ def _project_kanban_refs_from_page(
             direction=direction,
             created=str(ref.get("created") or ""),
         )
+
+
+def _project_sources_from_pages(
+    target: sqlite3.Connection,
+    wiki_root: Path,
+    pages: list[_PageProjection],
+) -> None:
+    """Rebuild minimal source rows from page frontmatter when old DB rows are gone."""
+
+    for page in pages:
+        for source_id in page.sources:
+            if not source_id.startswith("raw/"):
+                continue
+            raw_path = wiki_root / source_id
+            if not raw_path.is_file():
+                continue
+            existing = target.execute(
+                "SELECT id FROM sources WHERE id = ?",
+                (source_id,),
+            ).fetchone()
+            if existing is not None:
+                continue
+            db.upsert_source(
+                target,
+                id=source_id,
+                ingested_at=page.updated or page.created,
+                sha256=sha256_file(raw_path),
+                source_url=None,
+                source_path=source_id,
+                version=_source_version_from_path(source_id),
+                previous_source_id=None,
+                is_latest=1,
+                classified_as=_source_class_from_path(source_id),
+            )
+
+
+def _source_class_from_path(source_id: str) -> str:
+    parts = Path(source_id).parts
+    if len(parts) < 2:
+        return "unknown"
+    directory = parts[1]
+    classes = {
+        "articles": "article",
+        "papers": "paper",
+        "transcripts": "transcript",
+        "unknown": "unknown",
+    }
+    return classes.get(directory, directory.rstrip("s") or "unknown")
+
+
+def _source_version_from_path(source_id: str) -> int:
+    import re
+
+    match = re.search(r"(?:^|-)v(?P<version>\d+)(?:-|$)", Path(source_id).name)
+    if match is None:
+        return 1
+    return int(match.group("version"))
 
 
 def _frontmatter_kanban_refs(value: Any) -> list[dict[str, Any]]:

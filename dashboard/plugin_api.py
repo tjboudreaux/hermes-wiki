@@ -32,9 +32,15 @@ from hermes_wiki.management import (
 from hermes_wiki.navigation import WikiNavigationError, validate_page_id
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, set_inbox_classification
 from hermes_wiki.search import search_wiki
-from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki, visible_wikis
+from hermes_wiki.visibility import (
+    WikiVisibilityError,
+    has_write_grant,
+    require_visible_wiki,
+    visible_wikis,
+)
 
 router = APIRouter()
+WRITE_PERMISSION_DENIED = "wiki write permission denied"
 
 
 class CreateWikiRequest(BaseModel):
@@ -217,7 +223,7 @@ async def ingest(
 ) -> dict[str, Any]:
     """Ingest a source path/URL, uploaded file, or explicit inbox batch."""
 
-    _require_visible(slug)
+    _require_write(slug)
     payload = payload or await _payload_from_request(request)
     if payload.inbox and payload.path_or_url:
         raise _bad_request("ingest accepts either path_or_url or inbox, not both")
@@ -266,7 +272,7 @@ def reclassify_inbox_item(
 ) -> dict[str, Any]:
     """Persist a manual classifier override for one inbox file."""
 
-    _slug, wiki_root = _require_visible(slug)
+    _slug, wiki_root = _require_write(slug)
     try:
         row = set_inbox_classification(
             wiki=slug,
@@ -340,7 +346,7 @@ async def create_wiki(payload: CreateWikiRequest) -> dict[str, Any]:
 async def archive_wiki(slug: str) -> dict[str, Any]:
     """Archive a visible Wiki without deleting files."""
 
-    _require_visible(slug)
+    _require_write(slug)
     try:
         result = core_archive_wiki(slug)
     except WikiManagementError as exc:
@@ -376,6 +382,16 @@ def _require_visible(slug: str) -> tuple[str, Path]:
         return require_visible_wiki(slug)
     except WikiVisibilityError as exc:
         raise _not_visible() from exc
+
+
+def _require_write(slug: str) -> tuple[str, Path]:
+    visible_slug, wiki_root = _require_visible(slug)
+    if not has_write_grant(visible_slug):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=WRITE_PERMISSION_DENIED,
+        )
+    return visible_slug, wiki_root
 
 
 def _registry_row(slug: str, wiki_root: Path) -> dict[str, Any]:
@@ -564,7 +580,20 @@ def _kanban_refs(
                     "created": row.get("created"),
                 },
             )
-    return [refs[key] for key in sorted(refs)]
+    return [_decorate_kanban_ref(refs[key]) for key in sorted(refs)]
+
+
+def _decorate_kanban_ref(row: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(row.get("task_id") or "")
+    try:
+        from hermes_wiki.kanban_link import read_task
+
+        task = read_task(task_id) if task_id else None
+    except Exception:
+        task = None
+    row["task_title"] = None if task is None else task.title
+    row["task"] = None if task is None else _jsonable(dict(task.raw or {}))
+    return row
 
 
 def _linked_page_rows(

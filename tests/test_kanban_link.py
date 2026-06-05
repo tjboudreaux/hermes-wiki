@@ -13,7 +13,7 @@ from hermes_wiki_cli.cli import main
 
 
 def _run_cli(home: Path, *argv: str) -> tuple[int, str, str]:
-    merged = {"HERMES_HOME": str(home), "USER": "kanban-tester"}
+    merged = {"HERMES_HOME": str(home), "USER": "kanban-tester", **_grant_env_from_argv(argv)}
     old = os.environ.copy()
     try:
         os.environ.clear()
@@ -30,6 +30,15 @@ def _run_cli(home: Path, *argv: str) -> tuple[int, str, str]:
     finally:
         os.environ.clear()
         os.environ.update(old)
+
+
+def _grant_env_from_argv(argv: tuple[str, ...]) -> dict[str, str]:
+    if "--wiki" not in argv:
+        return {}
+    index = argv.index("--wiki")
+    if index + 1 >= len(argv):
+        return {}
+    return {"HERMES_WIKI": argv[index + 1]}
 
 
 def _write_tasks(home: Path, tasks: dict[str, dict[str, Any]]) -> None:

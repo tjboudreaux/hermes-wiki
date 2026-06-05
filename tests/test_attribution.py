@@ -16,7 +16,8 @@ from hermes_wiki_cli.cli import main
 
 
 def _run_cli(home: Path, *argv: str, env: dict[str, str] | None = None) -> int:
-    merged = {"HERMES_HOME": str(home), "USER": "cli-user", **(env or {})}
+    inferred = _grant_env_from_argv(argv) if env is None or "HERMES_WIKI" not in env else {}
+    merged = {"HERMES_HOME": str(home), "USER": "cli-user", **inferred, **(env or {})}
     old = os.environ.copy()
     try:
         os.environ.clear()
@@ -25,6 +26,15 @@ def _run_cli(home: Path, *argv: str, env: dict[str, str] | None = None) -> int:
     finally:
         os.environ.clear()
         os.environ.update(old)
+
+
+def _grant_env_from_argv(argv: tuple[str, ...]) -> dict[str, str]:
+    if "--wiki" not in argv:
+        return {}
+    index = argv.index("--wiki")
+    if index + 1 >= len(argv):
+        return {}
+    return {"HERMES_WIKI": argv[index + 1]}
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
