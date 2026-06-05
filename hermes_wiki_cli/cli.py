@@ -25,6 +25,7 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
+from hermes_wiki.monitors import MonitorError, define_monitor
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
@@ -242,6 +243,24 @@ def wiki_command(args: argparse.Namespace) -> int:
                     f"{row['page_id']} {row['direction']} {row['task_id']}{title}"
                 )
             return 0
+        if verb == "monitor":
+            result = define_monitor(
+                source=args.source,
+                wiki=args.wiki,
+                profile=args.profile,
+                name=args.name,
+                schedule=args.schedule,
+                prompt=args.prompt,
+                skills=tuple(args.skills) if args.skills else None,
+                author=args.author,
+            )
+            print(
+                f"Defined monitor {result.definition.name} "
+                f"source={result.definition.source} wiki={result.wiki}"
+            )
+            print(f"SCHEMA.md: {result.path / 'SCHEMA.md'}")
+            print("Cron: not scheduled (run monitor --setup in a later phase)")
+            return 0
         if verb == "plugins":
             from hermes_wiki.trust import TrustError, list_plugins, trust_plugin, untrust_plugin
 
@@ -290,7 +309,7 @@ def wiki_command(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-    except (WikiManagementError, IngestError, WikiNavigationError, ValueError) as exc:
+    except (WikiManagementError, IngestError, WikiNavigationError, MonitorError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     raise AssertionError(f"unhandled wiki command: {verb}")
@@ -436,6 +455,24 @@ def _add_management_subcommands(
     refs.add_argument("ref_id", help="Wiki Page id, or task id when --task is set")
     refs.add_argument("--task", action="store_true", help="Treat ref_id as a kanban task id")
     refs.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+
+    monitor = subparsers.add_parser(
+        "monitor",
+        help="Define or update a portable Wiki Monitor (does not schedule cron)",
+    )
+    monitor.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    monitor.add_argument("--profile", help="Profile for current-wiki resolution")
+    monitor.add_argument("--source", choices=("arxiv", "rss", "x"), required=True)
+    monitor.add_argument("--name", help="Monitor name to create/update (defaults by source)")
+    monitor.add_argument("--schedule", help="Cron schedule stored with the portable definition")
+    monitor.add_argument("--prompt", help="Prompt payload stored with the portable definition")
+    monitor.add_argument(
+        "--skill",
+        dest="skills",
+        action="append",
+        help="Skill name to include in the monitor payload (repeatable)",
+    )
+    monitor.add_argument("--author", help="Override the acting author for attribution")
 
     plugins = subparsers.add_parser("plugins", help="List and trust custom plugins")
     plugin_subparsers = plugins.add_subparsers(dest="plugins_command")
