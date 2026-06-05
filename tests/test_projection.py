@@ -165,7 +165,8 @@ def test_failed_validation_retains_prior_db_and_records_failed_version(tmp_path:
 
     assert result.status == "failed"
     assert result.previous_version_id == "old-active"
-    assert result.snapshot_path is None
+    assert result.snapshot_path is not None
+    assert result.snapshot_path.exists()
     assert "missing required frontmatter field: type" in (result.notes or "")
     assert not (wiki_root / "wiki.db.tmp").exists()
 
@@ -186,6 +187,9 @@ def test_failed_validation_retains_prior_db_and_records_failed_version(tmp_path:
     assert manifest_rows[0]["version_id"] == result.version_id
     assert manifest_rows[0]["status"] == "failed"
     assert manifest_rows[0]["previous_version_id"] == "old-active"
+    assert manifest_rows[0]["snapshot_path"] == result.snapshot_path.relative_to(
+        wiki_root
+    ).as_posix()
 
 
 def test_rebuild_initializes_failed_version_db_when_no_prior_db_exists(tmp_path: Path) -> None:

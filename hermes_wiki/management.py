@@ -146,6 +146,9 @@ def show_wiki(
     row = _visible_registry_row(resolved.slug, home=resolved.home, include_archived=False)
     if row is None:
         raise WikiManagementError(NOT_FOUND_OR_NOT_VISIBLE)
+    from hermes_wiki.lint import ensure_projection_current
+
+    ensure_projection_current(Path(str(row["path"])))
     return row
 
 

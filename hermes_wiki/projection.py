@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -93,6 +95,22 @@ def rebuild_projection(
 
     root = Path(wiki_root)
     root.mkdir(parents=True, exist_ok=True)
+    with _rebuild_lock(root):
+        return _rebuild_projection_locked(
+            root,
+            rebuild_reason=rebuild_reason,
+            author=author,
+            author_kind=author_kind,
+        )
+
+
+def _rebuild_projection_locked(
+    root: Path,
+    *,
+    rebuild_reason: str,
+    author: str | None,
+    author_kind: str | None,
+) -> ProjectionRebuildResult:
     db_versions_dir = root / "db_versions"
     db_versions_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = db_versions_dir / "manifest.jsonl"
@@ -131,6 +149,7 @@ def rebuild_projection(
             author=author,
             author_kind=author_kind,
         )
+        snapshot_path = _snapshot_current_db(wiki_db_path, db_versions_dir, timestamp)
         result = ProjectionRebuildResult(
             version_id=version_id,
             created=created,
@@ -139,7 +158,7 @@ def rebuild_projection(
             source_tree_sha256=source_tree_hash,
             db_sha256=None,
             previous_version_id=previous_version_id,
-            snapshot_path=None,
+            snapshot_path=snapshot_path,
             manifest_path=manifest_path,
             notes=notes,
         )
@@ -165,6 +184,8 @@ def rebuild_projection(
 
     os.replace(tmp_db_path, wiki_db_path)
     _remove_sqlite_sidecars(tmp_db_path)
+    if snapshot_path is None:
+        snapshot_path = _snapshot_current_db(wiki_db_path, db_versions_dir, timestamp)
     result = ProjectionRebuildResult(
         version_id=version_id,
         created=created,
@@ -199,6 +220,51 @@ def sha256_file(path: Path | str) -> str:
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def projection_db_sha256(path: Path | str) -> str:
+    """Return a verifiable checksum of finalized projection DB contents.
+
+    The checksum intentionally excludes the ``projection_versions.db_sha256``
+    column values to avoid a self-referential hash. All other projected table
+    content and column names are included deterministically, so the stored value
+    can be recomputed after the DB has been finalized.
+    """
+
+    db_path = Path(path)
+    digest = hashlib.sha256()
+    tables = (
+        "pages",
+        "ingest_log",
+        "sources",
+        "taxonomy",
+        "trusted_plugins",
+        "kanban_refs",
+        "projection_versions",
+    )
+    with _readonly_sqlite(db_path) as conn:
+        for table in tables:
+            columns = [str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")]
+            if table == "projection_versions":
+                selected_columns = [column for column in columns if column != "db_sha256"]
+            else:
+                selected_columns = columns
+            digest.update(table.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(json.dumps(selected_columns, separators=(",", ":")).encode("utf-8"))
+            digest.update(b"\0")
+            order_by = selected_columns[0] if selected_columns else "rowid"
+            quoted = ", ".join(f'"{column}"' for column in selected_columns)
+            for row in conn.execute(f'SELECT {quoted} FROM "{table}" ORDER BY "{order_by}"'):
+                digest.update(
+                    json.dumps(
+                        [row[column] for column in selected_columns],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
+                digest.update(b"\0")
     return digest.hexdigest()
 
 
@@ -414,6 +480,7 @@ def _is_source_tree_excluded(rel: Path) -> bool:
     return name in {
         ".DS_Store",
         ".gitignore",
+        "wiki.db.tmp.lock",
         "wiki.db",
         "wiki.db-shm",
         "wiki.db-wal",
@@ -539,7 +606,7 @@ def _finalize_success_version(
         author=author,
         author_kind=author_kind,
     )
-    db_hash = sha256_file(tmp_db_path)
+    db_hash = projection_db_sha256(tmp_db_path)
     _record_projection_version(
         tmp_db_path,
         version_id=version_id,
@@ -554,6 +621,20 @@ def _finalize_success_version(
         author_kind=author_kind,
     )
     return db_hash
+
+
+@contextmanager
+def _rebuild_lock(wiki_root: Path) -> Iterator[None]:
+    """Serialize projection rebuilds with an advisory file lock."""
+
+    lock_path = wiki_root / "wiki.db.tmp.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _snapshot_current_db(wiki_db_path: Path, db_versions_dir: Path, timestamp: str) -> Path | None:
@@ -633,6 +714,7 @@ __all__ = [
     "ProjectionRebuildResult",
     "ProjectionValidationError",
     "ensure_projection_gitignore",
+    "projection_db_sha256",
     "rebuild_projection",
     "sha256_file",
     "source_tree_sha256",

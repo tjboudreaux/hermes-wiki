@@ -21,6 +21,7 @@ GITIGNORE_ENTRIES = (
     "wiki.db.tmp",
     "wiki.db.tmp-shm",
     "wiki.db.tmp-wal",
+    "wiki.db.tmp.lock",
     "db_versions/*.db",
     "!db_versions/manifest.jsonl",
 )
@@ -241,6 +242,7 @@ def _is_projection_binary(path: str) -> bool:
         "wiki.db.tmp",
         "wiki.db.tmp-shm",
         "wiki.db.tmp-wal",
+        "wiki.db.tmp.lock",
     } or (
         path.startswith("db_versions/") and path.endswith(".db")
     )

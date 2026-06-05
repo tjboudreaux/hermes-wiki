@@ -88,6 +88,12 @@ def wiki_command(args: argparse.Namespace) -> int:
             result = archive_wiki(args.slug, undo=True, author=args.author)
             print(f"Unarchived wiki {result.slug}")
             return 0
+        if verb == "lint":
+            from hermes_wiki.lint import lint_wiki
+
+            report = lint_wiki(slug=args.wiki, profile=args.profile, author=args.author)
+            print(report.to_json())
+            return 1 if report.status == "failed" else 0
         if verb == "purge":
             print(
                 "wiki purge is not available in this phase; archive is reversible "
@@ -168,6 +174,11 @@ def _add_management_subcommands(
     unarchive = subparsers.add_parser("unarchive", help="Unarchive a Wiki")
     unarchive.add_argument("slug", help="Wiki slug to restore")
     unarchive.add_argument("--author", help="Override the acting author for attribution")
+
+    lint = subparsers.add_parser("lint", help="Lint and repair a Wiki projection")
+    lint.add_argument("--wiki", dest="wiki", help="Explicit wiki slug (overrides current)")
+    lint.add_argument("--profile", help="Profile for current-wiki resolution")
+    lint.add_argument("--author", help="Override the acting author for attribution")
 
     purge = subparsers.add_parser("purge", help="Future destructive removal command")
     purge.add_argument("slug", help="Wiki slug that would be purged in a future phase")
