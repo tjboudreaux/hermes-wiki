@@ -172,6 +172,128 @@ def test_cli_search_safety_visibility_and_deleted_projection_rebuild(
     assert fixture.primary_wiki_db.exists()
 
 
+def test_cli_open_prints_authoritative_page_content_and_denies_cleanly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`wiki open` prints full Markdown for visible pages and hides denied lookups."""
+    fixture = build_test_wiki(tmp_path)
+
+    assert _run_cli(fixture.home, "open", "concepts/agent-memory") == 0
+    opened = capsys.readouterr().out
+    assert "id: concepts/agent-memory" in opened
+    assert "type: concept" in opened
+    assert "tags:" in opened
+    assert "# Agent Memory" in opened
+    assert "The getCwd helper appears in examples" in opened
+    assert "Page History" not in opened
+    assert "## History" not in opened
+
+    assert _run_cli(fixture.home, "open", "concepts/does-not-exist") == 1
+    missing = capsys.readouterr()
+    assert "not found" in (missing.out + missing.err).lower()
+    assert "Traceback" not in (missing.out + missing.err)
+
+    assert _run_cli(
+        fixture.home,
+        "open",
+        "concepts/agent-memory",
+        "--wiki",
+        fixture.private_slug,
+    ) == 1
+    denied = capsys.readouterr()
+    assert (denied.out + denied.err).strip() == "not found or not visible"
+
+    assert _run_cli(fixture.home, "open", "../outside", "--wiki", fixture.primary_slug) == 1
+    unsafe = capsys.readouterr()
+    assert "Traceback" not in (unsafe.out + unsafe.err)
+
+
+def test_cli_list_pages_filters_scope_and_denies_invisible_wikis(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`wiki list-pages` supports type/tag/AND filters and read visibility scoping."""
+    fixture = build_test_wiki(tmp_path)
+    with db.connect_wiki(fixture.primary_wiki_db) as conn:
+        db.upsert_page(
+            conn,
+            id="concepts/deprecated-topic",
+            title="Deprecated Topic",
+            type="concept",
+            created="2026-06-05T00:00:00Z",
+            updated="2026-06-05T00:00:00Z",
+            tags=["memory"],
+            body_text="# Deprecated Topic\n\nShould stay hidden.",
+            archived=1,
+        )
+        conn.commit()
+
+    assert _run_cli(fixture.home, "list-pages") == 0
+    all_pages = capsys.readouterr().out
+    assert "concepts/agent-memory" in all_pages
+    assert "entities/hermes" in all_pages
+    assert "sources/2026-06-05-agent-memory-article" in all_pages
+    assert "raw/inbox" not in all_pages
+    assert "unknown-sample.dat" not in all_pages
+    assert "concepts/deprecated-topic" not in all_pages
+
+    assert _run_cli(fixture.home, "list-pages", "--type", "concept") == 0
+    concepts = capsys.readouterr().out
+    assert "concepts/agent-memory" in concepts
+    assert "entities/hermes" not in concepts
+    assert "sources/2026-06-05-agent-memory-article" not in concepts
+
+    assert _run_cli(fixture.home, "list-pages", "--type", "source") == 0
+    sources = capsys.readouterr().out
+    assert "sources/2026-06-05-agent-memory-article" in sources
+    assert "raw/articles" not in sources
+    assert "concepts/agent-memory" not in sources
+
+    assert _run_cli(fixture.home, "list-pages", "--tag", "tooling") == 0
+    tooling = capsys.readouterr().out
+    assert "concepts/agent-memory" in tooling
+    assert "entities/hermes" in tooling
+    assert "queries/evaluate-agent-memory" not in tooling
+
+    assert _run_cli(fixture.home, "list-pages", "--type", "concept", "--tag", "tooling") == 0
+    concept_tooling = capsys.readouterr().out
+    assert "concepts/agent-memory" in concept_tooling
+    assert "entities/hermes" not in concept_tooling
+    assert "summaries/agent-operations" not in concept_tooling
+
+    assert _run_cli(fixture.home, "list-pages", "--type", "does-not-exist") == 0
+    assert capsys.readouterr().out.strip() == "No pages."
+    assert _run_cli(fixture.home, "list-pages", "--tag", "does-not-exist") == 0
+    assert capsys.readouterr().out.strip() == "No pages."
+
+    assert _run_cli(fixture.home, "list-pages", "--wiki", fixture.archived_slug) == 1
+    archived = capsys.readouterr()
+    assert (archived.out + archived.err).strip() == "not found or not visible"
+
+
+def test_cli_list_pages_agrees_with_search_and_rebuilds_deleted_projection(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Listing and search expose the same visible page set after projection rebuild."""
+    fixture = build_test_wiki(tmp_path)
+
+    assert _run_cli(fixture.home, "search", "memory", "--wiki", fixture.primary_slug) == 0
+    search_ids = _ids_from_cli_output(capsys.readouterr().out)
+    assert search_ids
+
+    assert _run_cli(fixture.home, "list-pages", "--wiki", fixture.primary_slug) == 0
+    listed_ids = _ids_from_cli_output(capsys.readouterr().out)
+    assert search_ids <= listed_ids
+
+    fixture.primary_wiki_db.unlink()
+    assert _run_cli(fixture.home, "list-pages", "--wiki", fixture.primary_slug) == 0
+    rebuilt_out = capsys.readouterr().out
+    assert "concepts/agent-memory" in rebuilt_out
+    assert fixture.primary_wiki_db.exists()
+
+
 def test_cli_search_matches_unicode_and_reflects_projection_refresh(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -216,3 +338,12 @@ def _search_result_ids(home: Path, query: str) -> list[str]:
     finally:
         os.environ.clear()
         os.environ.update(old)
+
+
+def _ids_from_cli_output(output: str) -> set[str]:
+    ids: set[str] = set()
+    for line in output.splitlines():
+        first = line.split(":", 1)[0].strip()
+        if "/" in first:
+            ids.add(first)
+    return ids

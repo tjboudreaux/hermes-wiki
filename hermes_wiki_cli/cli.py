@@ -17,6 +17,7 @@ from hermes_wiki.management import (
     show_wiki,
     switch_wiki,
 )
+from hermes_wiki.navigation import list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
 
@@ -141,6 +142,19 @@ def wiki_command(args: argparse.Namespace) -> int:
             for row in rows:
                 context = row.get("context") or row.get("snippet") or ""
                 print(f"{row['id']}: {row['title']} — {context}")
+            return 0
+        if verb == "open":
+            print(open_wiki_page(args.page_id, wiki=args.wiki), end="")
+            return 0
+        if verb == "list-pages":
+            rows = list_wiki_pages(wiki=args.wiki, page_type=args.page_type, tag=args.tag)
+            if not rows:
+                print("No pages.")
+                return 0
+            for row in rows:
+                tags = row.get("tags") or []
+                tag_text = ",".join(str(tag) for tag in tags)
+                print(f"{row['id']}: {row['title']} type={row['type']} tags={tag_text}")
             return 0
         if verb == "inbox":
             rows = list_inbox(wiki=args.wiki)
@@ -287,6 +301,15 @@ def _add_management_subcommands(
     search.add_argument("query", help="FTS query")
     search.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
     search.add_argument("--limit", type=int, default=5)
+
+    open_page = subparsers.add_parser("open", help="Print a Wiki Page's Markdown content")
+    open_page.add_argument("page_id", help="Wiki Page id, e.g. concepts/attention-mechanism")
+    open_page.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+
+    list_pages = subparsers.add_parser("list-pages", help="List Wiki Pages")
+    list_pages.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    list_pages.add_argument("--type", dest="page_type", help="Filter by page type")
+    list_pages.add_argument("--tag", dest="tag", help="Filter by tag")
 
     inbox = subparsers.add_parser("inbox", help="List unprocessed inbox files")
     inbox.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
