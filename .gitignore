@@ -1,5 +1,7 @@
 # Mission isolation and local secrets
 .hermes-test/
+.hermes-test-*/
+.hermes-test-g*/
 .env
 .readiness/
 
