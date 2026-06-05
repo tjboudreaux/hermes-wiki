@@ -180,6 +180,8 @@ def ingest_source(
     *,
     wiki: str | None = None,
     author: str | None = None,
+    author_kind: str = "human",
+    classifier: str | None = None,
     processor: Processor | None = None,
 ) -> IngestResult:
     """Ingest exactly one local path or URL into a Wiki."""
@@ -199,6 +201,7 @@ def ingest_source(
             status="oversized",
             classified_as="oversized",
             author=acting_author,
+            author_kind=author_kind,
         )
         raise IngestError("oversized source exceeds the 50MB Phase 1 ingest cap")
     return _ingest_source_content(
@@ -207,8 +210,10 @@ def ingest_source(
         wiki_slug=resolved.slug,
         wiki_root=wiki_root,
         author=acting_author,
+        author_kind=author_kind,
         processor=processor,
         remove_source_path=None,
+        preclassified_label=_forced_label(classifier),
     )
 
 
@@ -216,6 +221,7 @@ def ingest_inbox(
     *,
     wiki: str | None = None,
     author: str | None = None,
+    author_kind: str = "human",
     processor: Processor | None = None,
 ) -> list[IngestResult]:
     """Explicitly process the pending inbox for one Wiki.
@@ -244,6 +250,7 @@ def ingest_inbox(
                 status="oversized",
                 classified_as="oversized",
                 author=acting_author,
+                author_kind=author_kind,
             )
             results.append(result)
             continue
@@ -255,6 +262,7 @@ def ingest_inbox(
                 status="unknown",
                 classified_as=label.name,
                 author=acting_author,
+                author_kind=author_kind,
             )
             results.append(result)
             continue
@@ -264,6 +272,7 @@ def ingest_inbox(
             wiki_slug=resolved.slug,
             wiki_root=resolved.path,
             author=acting_author,
+            author_kind=author_kind,
             processor=processor,
             remove_source_path=inbox_path,
             preclassified_label=label,
@@ -280,6 +289,7 @@ def _ingest_source_content(
     wiki_slug: str,
     wiki_root: Path,
     author: str,
+    author_kind: str,
     processor: Processor | None,
     remove_source_path: Path | None,
     preclassified_label: ClassLabel | None = None,
@@ -291,6 +301,7 @@ def _ingest_source_content(
             wiki_slug=wiki_slug,
             wiki_root=wiki_root,
             author=author,
+            author_kind=author_kind,
             processor=processor,
             remove_source_path=remove_source_path,
             preclassified_label=preclassified_label,
@@ -304,6 +315,7 @@ def _ingest_source_content_locked(
     wiki_slug: str,
     wiki_root: Path,
     author: str,
+    author_kind: str,
     processor: Processor | None,
     remove_source_path: Path | None,
     preclassified_label: ClassLabel | None = None,
@@ -361,6 +373,7 @@ def _ingest_source_content_locked(
             digest=digest,
             now=now,
             author=author,
+            author_kind=author_kind,
             remove_source_path=remove_source_path,
             version_plan=version_plan,
         )
@@ -414,6 +427,7 @@ def _record_direct_inbox_status_if_applicable(
     status: str,
     classified_as: str,
     author: str,
+    author_kind: str,
 ) -> None:
     if source.url is not None:
         return
@@ -430,6 +444,7 @@ def _record_direct_inbox_status_if_applicable(
         status=status,
         classified_as=classified_as,
         author=author,
+        author_kind=author_kind,
     )
 
 
@@ -440,6 +455,7 @@ def _record_inbox_attempt(
     status: str,
     classified_as: str,
     author: str,
+    author_kind: str,
 ) -> IngestResult:
     now = _utc_now()
     relpath = inbox_path.relative_to(wiki_root).as_posix()
@@ -466,6 +482,7 @@ def _record_inbox_attempt(
             status=status,
             classified_as=classified_as,
             author=author,
+            author_kind=author_kind,
         )
         with db.connect_wiki(wiki_root / "wiki.db") as conn:
             db.insert_ingest_log(
@@ -479,7 +496,7 @@ def _record_inbox_attempt(
                 pages_updated=[],
                 drift_detected=0,
                 author=author,
-                author_kind="human",
+                author_kind=author_kind,
             )
             conn.commit()
         commit = git_ops.commit_change(
@@ -551,6 +568,7 @@ def _append_inbox_attempt_log(
     status: str,
     classified_as: str,
     author: str,
+    author_kind: str,
 ) -> None:
     details = json.dumps(
         {"source": source_ref, "status": status, "class": classified_as},
@@ -558,7 +576,7 @@ def _append_inbox_attempt_log(
         sort_keys=True,
     )
     with (wiki_root / "log.md").open("a", encoding="utf-8") as handle:
-        handle.write(f"| {now} | inbox | {source_ref} | {author} | human | {details} |\n")
+        handle.write(f"| {now} | inbox | {source_ref} | {author} | {author_kind} | {details} |\n")
 
 
 def _materialize_ingest(
@@ -572,6 +590,7 @@ def _materialize_ingest(
     digest: str,
     now: str,
     author: str,
+    author_kind: str,
     version_plan: _SourceVersionPlan,
     remove_source_path: Path | None = None,
 ) -> IngestResult:
@@ -603,7 +622,7 @@ def _materialize_ingest(
                 page=page,
                 now=now,
                 author=author,
-                author_kind="human",
+                author_kind=author_kind,
                 source_id=source_id,
             )
             (pages_updated if existed else pages_created).append(page.id)
@@ -614,6 +633,7 @@ def _materialize_ingest(
             planned_ids=[generated.page.id for generated in planned_pages],
             now=now,
             author=author,
+            author_kind=author_kind,
             touched=touched,
         )
         pages_updated.extend(updated_existing)
@@ -626,13 +646,13 @@ def _materialize_ingest(
             pages_created=pages_created,
             pages_updated=pages_updated,
             author=author,
-            author_kind="human",
+            author_kind=author_kind,
         )
         rebuild = projection.rebuild_projection(
             wiki_root,
             rebuild_reason="ingest",
             author=author,
-            author_kind="human",
+            author_kind=author_kind,
         )
         if rebuild.status != "active":
             raise IngestError(f"projection rebuild failed: {rebuild.notes}")
@@ -646,6 +666,7 @@ def _materialize_ingest(
             pages_created=pages_created,
             pages_updated=pages_updated,
             author=author,
+            author_kind=author_kind,
             version_plan=version_plan,
         )
         _update_registry_after_ingest(wiki_root, wiki_slug=wiki_slug, now=now)
@@ -681,6 +702,17 @@ def classify_source(
     """Deterministically classify a Source Snapshot through the classifier chain."""
 
     return _classify_source(name, content, wiki_root=wiki_root)
+
+
+def _forced_label(classifier: str | None) -> ClassLabel | None:
+    if classifier is None:
+        return None
+    clean = classifier.strip()
+    if not clean:
+        return None
+    if "\n" in clean or "\r" in clean or "/" in clean or "\\" in clean:
+        raise IngestError("invalid classifier")
+    return ClassLabel(name=clean, confidence="forced", reason="agent-forced")
 
 
 def _trusted_processor_for_label(wiki_root: Path, label_name: str) -> Processor | None:
@@ -964,6 +996,7 @@ def _cross_link_existing_pages(
     planned_ids: list[str],
     now: str,
     author: str,
+    author_kind: str,
     touched: dict[Path, bytes | None],
 ) -> list[str]:
     updated: list[str] = []
@@ -982,7 +1015,7 @@ def _cross_link_existing_pages(
             links.append(new_source_id)
         metadata["updated"] = now
         metadata["author"] = author
-        metadata["author_kind"] = "human"
+        metadata["author_kind"] = author_kind
         metadata["inbound_links"] = inbound
         metadata["links"] = links
         relative = _relative_link(from_page=existing.id, to_page=new_source_id)
@@ -1004,6 +1037,7 @@ def _record_ingest_rows(
     pages_created: list[str],
     pages_updated: list[str],
     author: str,
+    author_kind: str,
     version_plan: _SourceVersionPlan,
 ) -> None:
     with db.connect_wiki(wiki_root / "wiki.db") as conn:
@@ -1032,7 +1066,7 @@ def _record_ingest_rows(
             pages_updated=pages_updated,
             drift_detected=1 if version_plan.drift_detected else 0,
             author=author,
-            author_kind="human",
+            author_kind=author_kind,
         )
         conn.commit()
         db_hash = projection.projection_db_sha256(wiki_root / "wiki.db")
