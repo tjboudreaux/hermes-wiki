@@ -119,6 +119,7 @@ def seed_isolated_home(
     """
 
     target_home = Path(home) if home is not None else isolated_home(repo_root)
+    source_repo_root = Path(repo_root) if repo_root is not None else repo_root_from_module()
     env_source = Path(source_env) if source_env is not None else _default_source_env()
     target_home.mkdir(parents=True, exist_ok=True)
 
@@ -133,6 +134,7 @@ def seed_isolated_home(
     tmp_path.chmod(0o600)
     tmp_path.replace(env_path)
     env_path.chmod(0o600)
+    _install_wiki_slash_plugin(target_home, source_repo_root)
 
     return IsolatedHomeSeedResult(
         home=target_home,
@@ -140,6 +142,87 @@ def seed_isolated_home(
         seeded_keys=seeded_keys,
         missing_keys=missing_keys,
     )
+
+
+def _install_wiki_slash_plugin(target_home: Path, repo_root: Path) -> None:
+    """Install the repo-local Wiki plugin into the isolated Hermes home.
+
+    The plugin lives under the isolated home so Hermes discovers it as a normal
+    user plugin. Its ``__init__.py`` adds the repo root to ``sys.path`` before
+    delegating to ``adapters.hermes.wiki_plugin.register``; this avoids writing
+    into the live Hermes install while still exercising the real plugin slash
+    command registry.
+    """
+
+    plugin_root = target_home / "plugins" / "wiki"
+    plugin_root.mkdir(parents=True, exist_ok=True)
+    (plugin_root / "plugin.yaml").write_text(
+        "\n".join(
+            (
+                "name: wiki",
+                "version: 0.1.0",
+                "description: Hermes Wiki slash command bridge",
+                "kind: standalone",
+                "provides_tools: []",
+                "provides_hooks: []",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (plugin_root / "__init__.py").write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "import sys",
+                "from pathlib import Path",
+                "",
+                f"_REPO_ROOT = Path({str(repo_root)!r})",
+                "if str(_REPO_ROOT) not in sys.path:",
+                "    sys.path.insert(0, str(_REPO_ROOT))",
+                "",
+                "from adapters.hermes.wiki_plugin import register as _register",
+                "",
+                "",
+                "def register(ctx):",
+                "    return _register(ctx)",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    _enable_wiki_plugin(target_home)
+
+
+def _enable_wiki_plugin(target_home: Path) -> None:
+    config_path = target_home / "config.yaml"
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - PyYAML is a declared dependency
+        return
+
+    try:
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        loaded = {}
+    if not isinstance(loaded, dict):
+        loaded = {}
+
+    plugins = loaded.get("plugins")
+    if not isinstance(plugins, dict):
+        plugins = {}
+        loaded["plugins"] = plugins
+    enabled = plugins.get("enabled")
+    if not isinstance(enabled, list):
+        enabled = []
+    if "wiki" not in {str(item) for item in enabled}:
+        enabled.append("wiki")
+    plugins["enabled"] = enabled
+
+    tmp_path = config_path.with_name(f"{config_path.name}.tmp")
+    tmp_path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
+    tmp_path.replace(config_path)
 
 
 def _validate_dashboard_port(port: int) -> None:
