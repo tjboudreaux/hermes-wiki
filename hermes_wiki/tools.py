@@ -20,7 +20,12 @@ from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, validat
 from hermes_wiki.pipeline import MAX_INGEST_BYTES, IngestError, ingest_inbox, ingest_source
 from hermes_wiki.projection import PAGE_DIR_TYPES
 from hermes_wiki.search import search_wiki as search_one_wiki
-from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki, visible_wikis
+from hermes_wiki.visibility import (
+    WikiVisibilityError,
+    has_write_grant,
+    require_visible_wiki,
+    visible_wikis,
+)
 
 READ_TOOLS = frozenset(
     {
@@ -304,27 +309,7 @@ def _check_wiki_write_mode(wiki: str | None) -> bool:
     evaluated, so a Write Grant cannot reveal an invisible Wiki.
     """
 
-    env_wiki = os.environ.get("HERMES_WIKI")
-    if env_wiki and (wiki is None or env_wiki == wiki):
-        return True
-    try:
-        cfg = create_adapters().config.load()
-        wiki_cfg = cfg.get("wiki", {}) if isinstance(cfg, Mapping) else {}
-        grants = _string_set(
-            wiki_cfg.get("write_grants") if isinstance(wiki_cfg, Mapping) else None
-        )
-        toolsets = _string_set(cfg.get("toolsets") if isinstance(cfg, Mapping) else None)
-        enabled_toolsets = _string_set(
-            cfg.get("enabled_toolsets") if isinstance(cfg, Mapping) else None
-        )
-    except Exception:
-        return False
-    return (
-        "wiki" in toolsets
-        or "wiki" in enabled_toolsets
-        or "*" in grants
-        or (wiki is not None and wiki in grants)
-    )
+    return has_write_grant(wiki)
 
 
 def register_tools(registry: ToolRegistry | None = None) -> ToolRegistry:

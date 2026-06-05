@@ -31,9 +31,11 @@ def test_standalone_home_and_config_use_isolated_home(tmp_path, monkeypatch) -> 
 
 def test_standalone_tool_registry_prompt_kanban_cron_and_dashboard(tmp_path, monkeypatch) -> None:
     """Standalone seam implementations provide deterministic local behavior."""
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    (tmp_path / "wikis" / "ai-tooling").mkdir(parents=True)
-    (tmp_path / "wikis" / "design").mkdir(parents=True)
+    from fixtures.factory import build_populated_home
+
+    home = tmp_path / "hermes-home"
+    fixture = build_populated_home(home)
+    monkeypatch.setenv("HERMES_HOME", str(home))
     adapters = create_adapters()
 
     def echo(value: str) -> str:
@@ -46,8 +48,9 @@ def test_standalone_tool_registry_prompt_kanban_cron_and_dashboard(tmp_path, mon
 
     block = adapters.prompts.available_wikis_block(profile="research")
     assert "# Available Wikis" in block
-    assert "ai-tooling" in block
-    assert "design" in block
+    assert fixture.primary_slug in block
+    assert fixture.private_slug not in block
+    assert fixture.archived_slug not in block
 
     assert isinstance(adapters.kanban, StandaloneKanbanReader)
     adapters.kanban.add_task("KB-1", {"id": "KB-1", "title": "Read-only task"})

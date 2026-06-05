@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from adapters.hermes import _import_hermes_module
+from adapters.hermes import _import_hermes_module, install_prompt_injection
 from hermes_wiki import tools as wiki_tools
 
 registry: Any = _import_hermes_module("tools.registry").registry
+
+install_prompt_injection()
 
 
 def _result(value: Any) -> str:

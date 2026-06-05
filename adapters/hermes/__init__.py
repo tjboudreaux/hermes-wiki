@@ -129,12 +129,68 @@ class HermesPromptInjector:
         return _import_hermes_module("agent.prompt_builder")
 
     def available_wikis_block(self, profile: str | None = None) -> str:
-        del profile
-        return (
-            "# Available Wikis\n"
-            "Wiki discovery is provided by Hermes Wiki prompt integration. "
-            "Use wiki_search to consult visible knowledge bases."
+        from hermes_wiki.prompt import available_wikis_block
+
+        return available_wikis_block(
+            profile=profile,
+            home_resolver=HermesHomeResolver(),
+            config=HermesConfigLoader().load(),
         )
+
+    def install(self) -> bool:
+        """Patch Hermes' prompt assembly so the Available Wikis block is injected."""
+
+        return install_prompt_injection(self)
+
+
+def install_prompt_injection(injector: HermesPromptInjector | None = None) -> bool:
+    """Install an idempotent wrapper around Hermes ``build_system_prompt_parts``.
+
+    This adapter-only monkeypatch keeps the core package free of Hermes imports.
+    It is intentionally runtime-scoped: importing/using the Hermes adapter in an
+    isolated session wires the visible-wiki block into the real prompt builder
+    without modifying the installed Hermes source tree.
+    """
+
+    system_prompt = _import_hermes_module("agent.system_prompt")
+    original = getattr(system_prompt, "build_system_prompt_parts", None)
+    if not callable(original):
+        return False
+    if getattr(original, "_hermes_wiki_patched", False):
+        return True
+
+    prompt_injector = injector or HermesPromptInjector()
+
+    def build_system_prompt_parts_with_wikis(
+        agent: Any,
+        system_message: Any = None,
+    ) -> Mapping[str, str]:
+        parts = original(agent, system_message=system_message)
+        if not isinstance(parts, Mapping):
+            return parts
+        block = prompt_injector.available_wikis_block(profile=_active_profile_name())
+        if not block.strip():
+            return dict(parts)
+        patched = dict(parts)
+        stable = str(patched.get("stable") or "")
+        if "# Available Wikis" in stable:
+            return patched
+        patched["stable"] = "\n\n".join(part for part in (stable.strip(), block.strip()) if part)
+        return patched
+
+    build_system_prompt_parts_with_wikis.__dict__["_hermes_wiki_patched"] = True
+    build_system_prompt_parts_with_wikis.__dict__["_hermes_wiki_original"] = original
+    system_prompt.__dict__["build_system_prompt_parts"] = build_system_prompt_parts_with_wikis
+    return True
+
+
+def _active_profile_name() -> str | None:
+    try:
+        module = _import_hermes_module("agent.file_safety")
+        profile = module._resolve_active_profile_name()
+    except Exception:
+        return None
+    return str(profile) if profile else None
 
 
 class HermesKanbanReader:
@@ -296,4 +352,5 @@ __all__ = [
     "HermesPromptInjector",
     "HermesToolRegistry",
     "create_adapters",
+    "install_prompt_injection",
 ]

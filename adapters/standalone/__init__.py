@@ -170,14 +170,13 @@ class StandalonePromptInjector:
         return sorted(path.name for path in wikis_dir.iterdir() if path.is_dir())
 
     def available_wikis_block(self, profile: str | None = None) -> str:
-        del profile
-        slugs = self._visible_wiki_slugs()
-        if not slugs:
-            return "# Available Wikis\nNo visible wikis."
-        lines = ["# Available Wikis", "You have access to the following knowledge bases:"]
-        lines.extend(f"- {slug}: domain unavailable (0 pages, health unknown)" for slug in slugs)
-        lines.append("Use wiki_search to consult them when a question is domain-relevant.")
-        return "\n".join(lines)
+        from hermes_wiki.prompt import available_wikis_block
+
+        return available_wikis_block(
+            profile=profile,
+            home_resolver=self._home,
+            config=StandaloneConfigLoader(self._home).load(),
+        )
 
 
 class StandaloneKanbanReader:

@@ -209,6 +209,7 @@ def test_write_gate_allows_env_toolset_slug_and_wildcard_grants(
     _write_config(fixture.home, f"wiki:\n  write_grants: [{fixture.primary_slug}]\n")
     assert _check_wiki_write_mode(fixture.primary_slug)
     assert not _check_wiki_write_mode(fixture.private_slug)
+    assert _check_wiki_write_mode(None)
 
     _write_config(fixture.home, 'wiki:\n  write_grants: ["*"]\n')
     assert _check_wiki_write_mode(fixture.primary_slug)
