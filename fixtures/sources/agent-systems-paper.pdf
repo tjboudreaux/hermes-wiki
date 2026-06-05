@@ -1,0 +1,21 @@
+%PDF-1.7
+Fixture Paper: Evaluation of Persistent Memory in Coding Agents
+DOI: 10.5555/hermes.fixture.2026.001
+
+Abstract
+We evaluate persistent memory systems for coding agents. The study compares raw evidence
+retention, curated wiki synthesis, and ephemeral scratchpads across long-running repository tasks.
+
+1. Introduction
+Persistent agent memory can reduce repeated discovery and improve handoff quality when provenance is
+preserved.
+
+2. Methods
+We reviewed source snapshots, page histories, and search projections under deterministic fixtures.
+
+3. Results
+Linked Wiki Pages improved recall of project-specific terms such as getCwd and HERMES_HOME.
+
+References
+[1] Fixture Research Collective. Rebuildable projections for agent memory. 2026.
+%%EOF

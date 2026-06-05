@@ -1,0 +1,5 @@
+Speaker 1: Welcome to the Hermes Wiki memory workshop.
+Speaker 2: The important thing is that Raw Sources stay immutable.
+Speaker 1: Right, and Page History should render outside the Wiki Page body.
+Speaker 3: We also need kanban references to survive a wiki.db rebuild.
+Speaker 2: The test fixture should cover article, paper, transcript, unknown, and oversized inputs.
