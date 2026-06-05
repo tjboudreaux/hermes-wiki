@@ -25,6 +25,7 @@ from hermes_wiki import db, git_ops, projection
 from hermes_wiki.attribution import append_log_entry, record_change, resolve_actor
 from hermes_wiki.classifiers import classify_source as _classify_source
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown, write_markdown
+from hermes_wiki.kanban_link import auto_link_ingest_pages
 from hermes_wiki.management import (
     NOT_FOUND_OR_NOT_VISIBLE,
     WikiManagementError,
@@ -639,6 +640,12 @@ def _materialize_ingest(
             touched=touched,
         )
         pages_updated.extend(updated_existing)
+        auto_link_ingest_pages(
+            wiki_root,
+            source_text=source.text,
+            page_ids=[generated.page.id for generated in planned_pages],
+            created=now,
+        )
         _rewrite_index(wiki_root)
         _record_page_changes_for_ingest(
             wiki_root,

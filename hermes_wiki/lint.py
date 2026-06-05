@@ -611,6 +611,38 @@ def _kanban_findings(
                 direction=direction,
             )
         )
+    findings.extend(_dangling_kanban_findings(frontmatter_refs | db_refs))
+    return findings
+
+
+def _dangling_kanban_findings(
+    refs: set[tuple[str, str, str]],
+) -> list[dict[str, Any]]:
+    if not refs:
+        return []
+    try:
+        from hermes_wiki.kanban_link import KanbanUnavailableError, read_task
+    except Exception:
+        return []
+    findings: list[dict[str, Any]] = []
+    for page_id, task_id, direction in sorted(refs):
+        try:
+            task = read_task(task_id)
+        except KanbanUnavailableError:
+            return []
+        if task is not None:
+            continue
+        findings.append(
+            _finding(
+                "dangling_kanban_ref",
+                "medium",
+                f"kanban ref {page_id} points to missing task {task_id}",
+                page_id=page_id,
+                path=f"{page_id}.md",
+                task_id=task_id,
+                direction=direction,
+            )
+        )
     return findings
 
 

@@ -9,6 +9,12 @@ from typing import Any
 
 from hermes_wiki import __version__
 from hermes_wiki.attribution import list_log_entries, resolve_actor
+from hermes_wiki.kanban_link import (
+    link_page_to_task,
+    refs_for_page,
+    refs_for_task,
+    unlink_page_from_task,
+)
 from hermes_wiki.management import (
     WikiManagementError,
     archive_wiki,
@@ -189,6 +195,53 @@ def wiki_command(args: argparse.Namespace) -> int:
         if verb == "log":
             _print_activity_log(args)
             return 0
+        if verb == "link":
+            result = link_page_to_task(
+                args.page_id,
+                args.task_id,
+                wiki=args.wiki,
+                author=args.author,
+                author_kind="human",
+            )
+            if result.changed:
+                print(
+                    f"linked {result.page_id} -> {result.task_id}"
+                    f"{_task_title_suffix(result.task_title)}"
+                )
+            else:
+                print(
+                    f"already linked {result.page_id} -> {result.task_id}"
+                    f"{_task_title_suffix(result.task_title)}"
+                )
+            return 0
+        if verb == "unlink":
+            result = unlink_page_from_task(
+                args.page_id,
+                args.task_id,
+                wiki=args.wiki,
+                author=args.author,
+                author_kind="human",
+            )
+            if result.changed:
+                print(f"unlinked {result.page_id} -> {result.task_id}")
+            else:
+                print(f"not linked {result.page_id} -> {result.task_id}")
+            return 0
+        if verb == "refs":
+            rows = (
+                refs_for_task(args.ref_id, wiki=args.wiki)
+                if args.task
+                else refs_for_page(args.ref_id, wiki=args.wiki)
+            )
+            if not rows:
+                print("No linked tasks." if not args.task else "No linked pages.")
+                return 0
+            for row in rows:
+                title = _task_title_suffix(row.get("task_title"))
+                print(
+                    f"{row['page_id']} {row['direction']} {row['task_id']}{title}"
+                )
+            return 0
         if verb == "plugins":
             from hermes_wiki.trust import TrustError, list_plugins, trust_plugin, untrust_plugin
 
@@ -367,6 +420,23 @@ def _add_management_subcommands(
     log.add_argument("--limit", type=int, default=50, help="Maximum rows to print")
     log.add_argument("--offset", type=int, default=0, help="Rows to skip before printing")
 
+    link = subparsers.add_parser("link", help="Link a Wiki Page to a kanban task")
+    link.add_argument("page_id", help="Wiki Page id")
+    link.add_argument("task_id", help="Kanban task id")
+    link.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    link.add_argument("--author", help="Override the acting author for attribution")
+
+    unlink = subparsers.add_parser("unlink", help="Remove a Wiki Page kanban link")
+    unlink.add_argument("page_id", help="Wiki Page id")
+    unlink.add_argument("task_id", help="Kanban task id")
+    unlink.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    unlink.add_argument("--author", help="Override the acting author for attribution")
+
+    refs = subparsers.add_parser("refs", help="Show Wiki-owned kanban references")
+    refs.add_argument("ref_id", help="Wiki Page id, or task id when --task is set")
+    refs.add_argument("--task", action="store_true", help="Treat ref_id as a kanban task id")
+    refs.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+
     plugins = subparsers.add_parser("plugins", help="List and trust custom plugins")
     plugin_subparsers = plugins.add_subparsers(dest="plugins_command")
     plugin_list = plugin_subparsers.add_parser("list", help="List custom plugins")
@@ -425,6 +495,10 @@ def _print_activity_log(args: argparse.Namespace) -> None:
             f"{entry.timestamp} {entry.author_kind} {entry.author} "
             f"{entry.action} {entry.target} {entry.details}".rstrip()
         )
+
+
+def _task_title_suffix(title: Any) -> str:
+    return "" if title in (None, "") else f" — {title}"
 
 
 def _format_summary_line(row: dict[str, Any], *, include_status: bool) -> str:

@@ -14,6 +14,7 @@ from hermes_wiki import db, git_ops, projection
 from hermes_wiki.attribution import record_change, resolve_actor
 from hermes_wiki.classifiers import classify_source
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown, write_markdown
+from hermes_wiki.kanban_link import KanbanLinkError, link_page_to_task, read_task
 from hermes_wiki.lint import ensure_projection_current, projection_findings
 from hermes_wiki.management import NOT_FOUND_OR_NOT_VISIBLE
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, validate_page_id
@@ -292,14 +293,15 @@ def wiki_link_kanban(
     if not _check_wiki_write_mode(slug):
         return WRITE_PERMISSION_DENIED
     try:
-        return _link_kanban_ref(
-            wiki_root,
-            wiki=slug,
+        del wiki_root
+        return link_page_to_task(
             page_id=page_id,
             task_id=task_id,
+            wiki=slug,
             author=_agent_author(),
-        )
-    except WikiNavigationError as exc:
+            author_kind="agent",
+        ).to_row()
+    except (WikiNavigationError, KanbanLinkError) as exc:
         return str(exc)
 
 
@@ -412,98 +414,6 @@ def _create_or_update_page(
         "path": page_path.relative_to(wiki_root).as_posix(),
         "author": author,
         "author_kind": author_kind,
-        "commit_id": commit.commit_id,
-    }
-
-
-def _link_kanban_ref(
-    wiki_root: Path,
-    *,
-    wiki: str,
-    page_id: str,
-    task_id: str,
-    author: str,
-) -> dict[str, Any]:
-    clean_page_id = validate_page_id(page_id)
-    clean_task_id = _one_line(task_id, "task_id")
-    page_path = _page_path(wiki_root, clean_page_id)
-    if page_path is None or not page_path.is_file():
-        raise WikiNavigationError(f"page not found: {clean_page_id}")
-    frontmatter, body = read_markdown(page_path)
-    if str(frontmatter.get("id") or "") != clean_page_id:
-        raise WikiNavigationError(f"page not found: {clean_page_id}")
-
-    now = _utc_now()
-    refs = [dict(ref) for ref in _frontmatter_kanban_refs(frontmatter)]
-    wanted = {"task_id": clean_task_id, "direction": "page->task"}
-    existing = next(
-        (
-            ref
-            for ref in refs
-            if ref.get("task_id") == wanted["task_id"]
-            and ref.get("direction", "page->task") == wanted["direction"]
-        ),
-        None,
-    )
-    if existing is None:
-        refs.append({**wanted, "created": now})
-        created = now
-    else:
-        created = str(existing.get("created") or now)
-        existing["created"] = created
-
-    frontmatter["kanban_refs"] = refs
-    frontmatter["updated"] = now
-    frontmatter["author"] = author
-    frontmatter["author_kind"] = "agent"
-    write_markdown(page_path, dict(frontmatter), body)
-    record_change(
-        wiki_root,
-        timestamp=now,
-        action="link-kanban",
-        page_id=clean_page_id,
-        author=author,
-        author_kind="agent",
-        details={"task_id": clean_task_id, "direction": "page->task"},
-    )
-    rebuild = projection.rebuild_projection(
-        wiki_root,
-        rebuild_reason="manual",
-        author=author,
-        author_kind="agent",
-    )
-    if rebuild.status != "active":
-        raise WikiNavigationError(f"projection rebuild failed: {rebuild.notes}")
-    with db.connect_wiki(wiki_root / "wiki.db") as conn:
-        db.upsert_kanban_ref(
-            conn,
-            page_id=clean_page_id,
-            task_id=clean_task_id,
-            direction="page->task",
-            created=created,
-        )
-        conn.commit()
-        db_hash = projection.projection_db_sha256(wiki_root / "wiki.db")
-        conn.execute(
-            "UPDATE projection_versions SET db_sha256 = ? WHERE status = 'active'",
-            (db_hash,),
-        )
-        conn.commit()
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    commit = git_ops.commit_change(
-        wiki_root,
-        action="link-kanban",
-        what=f"{clean_page_id} {clean_task_id}",
-        author=author,
-    )
-    return {
-        "wiki": wiki,
-        "page_id": clean_page_id,
-        "task_id": clean_task_id,
-        "direction": "page->task",
-        "created": created,
-        "author": author,
-        "author_kind": "agent",
         "commit_id": commit.commit_id,
     }
 
@@ -664,10 +574,10 @@ def _frontmatter_kanban_refs(frontmatter: Mapping[str, Any]) -> list[Mapping[str
 
 def _read_kanban_task(task_id: str) -> Mapping[str, Any] | None:
     try:
-        task = create_adapters().kanban.get_task(task_id)
+        task = read_task(task_id)
     except Exception:
         return None
-    return _jsonable(dict(task)) if task is not None else None
+    return _jsonable(dict(task.raw or {})) if task is not None else None
 
 
 def _load_inbox_status(wiki_root: Path) -> dict[str, dict[str, str]]:

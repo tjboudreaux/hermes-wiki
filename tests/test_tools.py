@@ -383,6 +383,10 @@ def test_wiki_link_kanban_updates_wiki_side_only(monkeypatch: Any, tmp_path: Pat
     monkeypatch.setenv("HERMES_MODEL", "claude-test")
     kanban_db = fixture.home / "kanban.db"
     kanban_db.write_text("read-only sentinel", encoding="utf-8")
+    (fixture.home / "kanban_tasks.json").write_text(
+        json.dumps({"KB-999": {"id": "KB-999", "title": "Agent-side task"}}),
+        encoding="utf-8",
+    )
     before_bytes = kanban_db.read_bytes()
     before_mtime = kanban_db.stat().st_mtime_ns
 

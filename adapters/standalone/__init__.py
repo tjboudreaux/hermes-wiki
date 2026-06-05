@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -182,7 +183,12 @@ class StandalonePromptInjector:
 class StandaloneKanbanReader:
     """Read-only in-memory Kanban adapter for tests."""
 
-    def __init__(self, tasks: Mapping[str, Mapping[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        tasks: Mapping[str, Mapping[str, Any]] | None = None,
+        home: StandaloneHomeResolver | None = None,
+    ) -> None:
+        self._home = home
         self._tasks: dict[str, dict[str, Any]] = {
             task_id: dict(task) for task_id, task in (tasks or {}).items()
         }
@@ -192,7 +198,12 @@ class StandaloneKanbanReader:
 
     def get_task(self, task_id: str) -> Mapping[str, Any] | None:
         task = self._tasks.get(task_id)
-        return dict(task) if task is not None else None
+        if task is not None:
+            return dict(task)
+        task = self._json_task(task_id)
+        if task is not None:
+            return task
+        return self._sqlite_task(task_id)
 
     def list_tasks(
         self,
@@ -201,7 +212,7 @@ class StandaloneKanbanReader:
         assignee: str | None = None,
         limit: int | None = None,
     ) -> Sequence[Mapping[str, Any]]:
-        tasks = list(self._tasks.values())
+        tasks = list(self._tasks.values()) + list(self._json_tasks().values())
         if status is not None:
             tasks = [task for task in tasks if task.get("status") == status]
         if assignee is not None:
@@ -209,6 +220,45 @@ class StandaloneKanbanReader:
         if limit is not None:
             tasks = tasks[:limit]
         return [dict(task) for task in tasks]
+
+    def _json_tasks(self) -> dict[str, dict[str, Any]]:
+        if self._home is None:
+            return {}
+        path = self._home.home() / "kanban_tasks.json"
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f"invalid kanban task fixture: {path}")
+        tasks: dict[str, dict[str, Any]] = {}
+        for key, value in loaded.items():
+            if not isinstance(value, Mapping):
+                continue
+            task_id = str(value.get("id") or value.get("task_id") or key)
+            tasks[task_id] = {"id": task_id, **dict(value)}
+        return tasks
+
+    def _json_task(self, task_id: str) -> Mapping[str, Any] | None:
+        return self._json_tasks().get(task_id)
+
+    def _sqlite_task(self, task_id: str) -> Mapping[str, Any] | None:
+        if self._home is None:
+            return None
+        path = self._home.home() / "kanban.db"
+        if not path.exists():
+            return None
+        uri = f"file:{path.as_posix()}?mode=ro"
+        try:
+            conn = sqlite3.connect(uri, uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError:
+            return None
+        return None if row is None else dict(row)
 
 
 class StandaloneCronAdapter:
@@ -296,7 +346,7 @@ def create_adapters(env: Mapping[str, str] | None = None) -> AdapterSet:
         config=StandaloneConfigLoader(home),
         tools=StandaloneToolRegistry(),
         prompts=StandalonePromptInjector(home),
-        kanban=StandaloneKanbanReader(),
+        kanban=StandaloneKanbanReader(home=home),
         cron=StandaloneCronAdapter(home),
         dashboard=StandaloneDashboardLoader(),
     )

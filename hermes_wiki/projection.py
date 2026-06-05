@@ -52,6 +52,7 @@ class ProjectionRebuildResult:
 class _PageProjection:
     id: str
     path: Path
+    metadata: dict[str, Any]
     title: str
     type: str
     created: str
@@ -321,6 +322,7 @@ def _build_tmp_projection(
                 snippet=page.snippet,
                 body_text=page.body_text,
             )
+            _project_kanban_refs_from_page(conn, page)
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     return expected_pages
@@ -371,16 +373,6 @@ def _copy_support_tables(target: sqlite3.Connection, old_db_path: Path) -> None:
                 )
             for row in old.execute("SELECT * FROM taxonomy ORDER BY tag"):
                 db.add_taxonomy_tag(target, tag=str(row["tag"]), created=row["created"])
-            for row in old.execute(
-                "SELECT * FROM kanban_refs ORDER BY page_id, task_id, direction"
-            ):
-                db.upsert_kanban_ref(
-                    target,
-                    page_id=str(row["page_id"]),
-                    task_id=str(row["task_id"]),
-                    direction=str(row["direction"]),
-                    created=row["created"],
-                )
     except sqlite3.DatabaseError:
         return
 
@@ -389,6 +381,42 @@ def _project_trusted_plugins_from_schema(target: sqlite3.Connection, wiki_root: 
     from hermes_wiki.trust import project_schema_trust_records
 
     project_schema_trust_records(wiki_root, target)
+
+
+def _project_kanban_refs_from_page(
+    target: sqlite3.Connection,
+    page: _PageProjection,
+) -> None:
+    for ref in _frontmatter_kanban_refs(page.metadata.get("kanban_refs")):
+        task_id = str(ref.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        direction = str(ref.get("direction") or "page->task").strip() or "page->task"
+        db.upsert_kanban_ref(
+            target,
+            page_id=page.id,
+            task_id=task_id,
+            direction=direction,
+            created=str(ref.get("created") or ""),
+        )
+
+
+def _frontmatter_kanban_refs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("task_id") or "").strip()
+        direction = str(item.get("direction") or "page->task").strip() or "page->task"
+        key = (task_id, direction)
+        if not task_id or key in seen:
+            continue
+        seen.add(key)
+        refs.append(dict(item))
+    return refs
 
 
 def _validate_tmp_projection(tmp_db_path: Path, expected_pages: list[_PageProjection]) -> None:
@@ -446,6 +474,7 @@ def _page_projection_from_file(wiki_root: Path, path: Path) -> _PageProjection:
     return _PageProjection(
         id=page_id,
         path=path,
+        metadata=metadata,
         title=title,
         type=page_type,
         created=created,
