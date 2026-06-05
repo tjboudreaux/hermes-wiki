@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.28"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-wiki"
+version = "0.1.0"
+description = "Hermes Wiki Plugin package scaffold"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "Hermes Wiki contributors" }]
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+hermes-wiki = "hermes_wiki_cli.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.3",
+  "ruff>=0.15.16",
+  "ty==0.0.44",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_wiki", "hermes_wiki_cli", "adapters", "fixtures"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+  ".git",
+  ".hermes-test",
+  ".readiness",
+  ".ruff_cache",
+  ".venv",
+  "node_modules",
+]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "UP"]
+
+[tool.ty]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = [
+  "hermes_wiki",
+  "hermes_wiki_cli",
+  "adapters",
+  "fixtures",
+  "tests",
+]
+exclude = [
+  ".hermes-test/",
+  ".readiness/",
+  ".venv/",
+  "node_modules/",
+]
