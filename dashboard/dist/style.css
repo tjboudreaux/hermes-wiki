@@ -1,0 +1,118 @@
+.hermes-wiki {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+}
+
+.hermes-wiki-hero,
+.hermes-wiki-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.hermes-wiki-toolbar {
+  justify-content: flex-end;
+}
+
+.hermes-wiki-toolbar input {
+  max-width: 24rem;
+}
+
+.hermes-wiki-eyebrow {
+  color: var(--muted-foreground, #94a3b8);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin: 0 0 0.25rem;
+  text-transform: uppercase;
+}
+
+.hermes-wiki h1 {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  line-height: 1.1;
+  margin: 0;
+}
+
+.hermes-wiki-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+
+.hermes-wiki-card-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hermes-wiki-card {
+  height: 100%;
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.hermes-wiki-card-link:focus-visible .hermes-wiki-card,
+.hermes-wiki-card-link:hover .hermes-wiki-card {
+  border-color: var(--primary, #8b5cf6);
+  transform: translateY(-1px);
+}
+
+.hermes-wiki-card-header {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: row;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.hermes-wiki-domain {
+  color: var(--muted-foreground, #94a3b8);
+  margin: 0 0 1rem;
+}
+
+.hermes-wiki-metrics {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.hermes-wiki-metrics dt {
+  color: var(--muted-foreground, #94a3b8);
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.hermes-wiki-metrics dd {
+  font-weight: 700;
+  margin: 0.15rem 0 0;
+}
+
+.hermes-wiki-health-good {
+  color: var(--success, #22c55e);
+}
+
+.hermes-wiki-health-warn {
+  color: var(--warning, #f59e0b);
+}
+
+.hermes-wiki-health-bad {
+  color: var(--destructive, #ef4444);
+}
+
+.hermes-wiki-state,
+.hermes-wiki-empty,
+.hermes-wiki-error {
+  margin-top: 1rem;
+}
+
+.hermes-wiki-back {
+  color: var(--primary, #a78bfa);
+  display: inline-flex;
+  margin-bottom: 1rem;
+  text-decoration: none;
+}

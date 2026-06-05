@@ -1,0 +1,13 @@
+{
+  "name": "wiki",
+  "version": "1.0.0",
+  "label": "Wikis",
+  "icon": "FileText",
+  "tab": {
+    "path": "/wikis",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

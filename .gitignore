@@ -20,4 +20,3 @@ db_versions/*.db
 # Frontend dependencies/build artifacts
 node_modules/
 dashboard/node_modules/
-dashboard/dist/

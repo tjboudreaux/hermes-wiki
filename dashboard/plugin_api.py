@@ -1,0 +1,551 @@
+"""Hermes Wiki dashboard plugin API.
+
+Mounted by Hermes at ``/api/plugins/wiki``. Handlers are deliberately thin
+wrappers around ``hermes_wiki`` core modules so CLI, agent tools, and dashboard
+behavior stay aligned.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Body, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
+from hermes_wiki import db
+from hermes_wiki.attribution import list_log_entries
+from hermes_wiki.frontmatter import FrontmatterError, read_markdown
+from hermes_wiki.lint import lint_wiki
+from hermes_wiki.management import (
+    NOT_FOUND_OR_NOT_VISIBLE,
+    WikiManagementError,
+)
+from hermes_wiki.management import (
+    archive_wiki as core_archive_wiki,
+)
+from hermes_wiki.management import (
+    create_wiki as core_create_wiki,
+)
+from hermes_wiki.navigation import WikiNavigationError, validate_page_id
+from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source
+from hermes_wiki.search import search_wiki
+from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki, visible_wikis
+
+router = APIRouter()
+
+
+class CreateWikiRequest(BaseModel):
+    """Payload for creating a Wiki from the dashboard."""
+
+    slug: str
+    domain: str | None = None
+
+
+class IngestRequest(BaseModel):
+    """Payload for dashboard ingest."""
+
+    path_or_url: str | None = Field(default=None, alias="path_or_url")
+    inbox: bool = False
+    classifier: str | None = None
+
+
+@router.get("/wikis")
+def list_wikis() -> list[dict[str, Any]]:
+    """Return visible Wiki metadata only."""
+
+    return [_wiki_row(row) for row in visible_wikis()]
+
+
+@router.get("/wikis/{slug}")
+def get_wiki(slug: str) -> dict[str, Any]:
+    """Return summary/stats for one visible Wiki."""
+
+    _slug, wiki_root = _require_visible(slug)
+    return _wiki_row(_registry_row(slug, wiki_root))
+
+
+@router.get("/wikis/{slug}/pages")
+def list_pages(
+    slug: str,
+    page: int = 1,
+    page_size: int = 50,
+    page_type: str | None = None,
+    type: str | None = None,
+    tag: str | None = None,
+) -> dict[str, Any]:
+    """Return a paginated, optionally-filtered page list."""
+
+    _slug, wiki_root = _require_visible(slug)
+    from hermes_wiki.lint import ensure_projection_current
+
+    ensure_projection_current(wiki_root)
+    effective_type = page_type or type
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
+        rows = db.list_pages(conn, page_type=effective_type, tag=tag, include_archived=False)
+    total = len(rows)
+    safe_page_size = max(1, min(int(page_size), 200))
+    safe_page = max(1, int(page))
+    start = (safe_page - 1) * safe_page_size
+    items = [_page_list_row(row) for row in rows[start : start + safe_page_size]]
+    return {
+        "wiki": slug,
+        "items": items,
+        "pagination": {
+            "page": safe_page,
+            "page_size": safe_page_size,
+            "total": total,
+            "has_next": start + safe_page_size < total,
+            "has_previous": safe_page > 1,
+        },
+        "filters": {"type": effective_type, "tag": tag},
+    }
+
+
+@router.get("/wikis/{slug}/pages/{page_id:path}")
+def get_page(slug: str, page_id: str) -> dict[str, Any]:
+    """Return full page content plus metadata panels."""
+
+    clean_page_id = _clean_page_id(page_id)
+    _slug, wiki_root = _require_visible(slug)
+    from hermes_wiki.lint import ensure_projection_current
+
+    ensure_projection_current(wiki_root)
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
+        row = db.get_page(conn, clean_page_id)
+        projected_refs = db.list_kanban_refs(conn, page_id=clean_page_id)
+    if row is None or int(row.get("archived") or 0):
+        raise _not_found("page not found")
+    page_path = _page_path(wiki_root, clean_page_id)
+    if page_path is None or not page_path.is_file():
+        raise _not_found("page not found")
+    try:
+        frontmatter, body = read_markdown(page_path)
+    except (OSError, FrontmatterError) as exc:
+        raise _not_found("page not found") from exc
+    if str(frontmatter.get("id") or "") != clean_page_id:
+        raise _not_found("page not found")
+    history = [entry.to_row() for entry in list_log_entries(wiki_root, page_id=clean_page_id)]
+    outbound = [str(item) for item in _as_sequence(frontmatter.get("links"))]
+    return {
+        "wiki": slug,
+        "id": clean_page_id,
+        "page_id": clean_page_id,
+        "title": frontmatter.get("title") or row.get("title"),
+        "type": frontmatter.get("type") or row.get("type"),
+        "markdown": body,
+        "body": body,
+        "frontmatter": _jsonable(frontmatter),
+        "inbound_links": int(row.get("inbound_links") or 0),
+        "outbound_links": outbound,
+        "kanban_refs": _kanban_refs(clean_page_id, frontmatter, projected_refs),
+        "history": history,
+        "path": page_path.relative_to(wiki_root).as_posix(),
+    }
+
+
+@router.get("/wikis/{slug}/search")
+def search(slug: str, q: str, limit: int = 10) -> dict[str, Any]:
+    """Search one visible Wiki with FTS5/BM25 ranking."""
+
+    _require_visible(slug)
+    try:
+        rows = search_wiki(q, wiki=slug, limit=max(1, min(limit, 50)))
+    except WikiManagementError as exc:
+        if str(exc) == NOT_FOUND_OR_NOT_VISIBLE:
+            raise _not_visible() from exc
+        raise _bad_request(str(exc)) from exc
+    return {
+        "wiki": slug,
+        "query": q,
+        "results": [_search_row(row) for row in rows],
+    }
+
+
+@router.post("/wikis/{slug}/ingest")
+async def ingest_route(
+    slug: str,
+    request: Request,
+    payload: Annotated[IngestRequest | None, Body()] = None,
+) -> dict[str, Any]:
+    """FastAPI route wrapper for dashboard ingest."""
+
+    return await ingest(slug, payload=payload, request=request)
+
+
+async def ingest(
+    slug: str,
+    payload: IngestRequest | None = None,
+    request: Request | None = None,
+) -> dict[str, Any]:
+    """Ingest a source path/URL, uploaded file, or explicit inbox batch."""
+
+    _require_visible(slug)
+    payload = payload or await _payload_from_request(request)
+    if payload.inbox and payload.path_or_url:
+        raise _bad_request("ingest accepts either path_or_url or inbox, not both")
+    if payload.inbox:
+        try:
+            results = ingest_inbox(wiki=slug)
+        except IngestError as exc:
+            raise _bad_request(str(exc)) from exc
+        return {
+            "wiki": slug,
+            "status": "ok",
+            "results": [_ingest_row(result) for result in results],
+        }
+    if not payload.path_or_url:
+        raise _bad_request("ingest requires path_or_url or inbox=true")
+    try:
+        result = ingest_source(
+            payload.path_or_url,
+            wiki=slug,
+            classifier=payload.classifier,
+            author_kind="human",
+        )
+    except IngestError as exc:
+        raise _bad_request(str(exc)) from exc
+    return {"wiki": slug, "status": "ok", "result": _ingest_row(result)}
+
+
+@router.get("/wikis/{slug}/inbox")
+def get_inbox(slug: str) -> list[dict[str, Any]]:
+    """List unprocessed inbox files and classifier/status data."""
+
+    _slug, wiki_root = _require_visible(slug)
+    from hermes_wiki.tools import wiki_inbox
+
+    rows = wiki_inbox(slug)
+    if isinstance(rows, str):
+        raise _not_visible()
+    return [_inbox_row(row, wiki_root) for row in rows]
+
+
+@router.get("/wikis/{slug}/health")
+def get_health(slug: str) -> dict[str, Any]:
+    """Return structured lint report for one visible Wiki."""
+
+    _require_visible(slug)
+    try:
+        report = lint_wiki(slug=slug).to_dict()
+    except WikiManagementError as exc:
+        if str(exc) == NOT_FOUND_OR_NOT_VISIBLE:
+            raise _not_visible() from exc
+        raise _bad_request(str(exc)) from exc
+    findings = [_finding_row(finding) for finding in report.get("findings", [])]
+    report["findings"] = findings
+    return report
+
+
+@router.get("/wikis/{slug}/log")
+def get_log(
+    slug: str,
+    page: int = 1,
+    page_size: int = 50,
+    author: str | None = None,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    """Return paginated attributed activity entries."""
+
+    _slug, wiki_root = _require_visible(slug)
+    all_entries = list_log_entries(wiki_root, author=author, author_kind=kind)
+    safe_page_size = max(1, min(int(page_size), 200))
+    safe_page = max(1, int(page))
+    start = (safe_page - 1) * safe_page_size
+    items = [entry.to_row() for entry in all_entries[start : start + safe_page_size]]
+    return {
+        "wiki": slug,
+        "items": items,
+        "pagination": {
+            "page": safe_page,
+            "page_size": safe_page_size,
+            "total": len(all_entries),
+            "has_next": start + safe_page_size < len(all_entries),
+            "has_previous": safe_page > 1,
+        },
+        "filters": {"author": author, "kind": kind},
+    }
+
+
+@router.post("/wikis")
+async def create_wiki(payload: CreateWikiRequest) -> dict[str, Any]:
+    """Create a Wiki using the same core path as the CLI."""
+
+    try:
+        result = core_create_wiki(payload.slug, domain=payload.domain)
+    except WikiManagementError as exc:
+        raise _bad_request(str(exc)) from exc
+    return _wiki_row(result.registry_row)
+
+
+@router.post("/wikis/{slug}/archive")
+async def archive_wiki(slug: str) -> dict[str, Any]:
+    """Archive a visible Wiki without deleting files."""
+
+    _require_visible(slug)
+    try:
+        result = core_archive_wiki(slug)
+    except WikiManagementError as exc:
+        if str(exc) == NOT_FOUND_OR_NOT_VISIBLE:
+            raise _not_visible() from exc
+        raise _bad_request(str(exc)) from exc
+    return {
+        "slug": result.slug,
+        "path": result.path.as_posix(),
+        "archived": result.archived,
+        "commit_id": result.commit_id,
+    }
+
+
+@router.delete("/wikis/{slug}")
+async def delete_wiki(slug: str, confirm: bool = False) -> dict[str, Any]:
+    """Refuse plain purge requests; deletion is explicit-only/future."""
+
+    if not confirm:
+        return {
+            "slug": slug,
+            "status": "refused",
+            "message": "explicit confirmation required; purge is not implemented",
+        }
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="purge is not implemented",
+    )
+
+
+def _require_visible(slug: str) -> tuple[str, Path]:
+    try:
+        return require_visible_wiki(slug)
+    except WikiVisibilityError as exc:
+        raise _not_visible() from exc
+
+
+def _registry_row(slug: str, wiki_root: Path) -> dict[str, Any]:
+    registry = wiki_root.parent / "wikis.db"
+    with db.connect_registry(registry) as conn:
+        db.initialize_registry(conn)
+        row = db.get_wiki(conn, slug)
+    if row is None:
+        raise _not_visible()
+    return dict(row)
+
+
+def _wiki_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "slug": row.get("slug"),
+        "domain": row.get("domain"),
+        "page_count": int(row.get("page_count") or 0),
+        "source_count": int(row.get("source_count") or 0),
+        "health_score": float(row.get("health_score") or 0.0),
+        "last_ingest": row.get("last_ingest"),
+        "last_lint": row.get("last_lint"),
+        "created": row.get("created"),
+        "updated": row.get("updated"),
+        "path": str(row.get("path") or ""),
+    }
+
+
+def _page_list_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "title": row.get("title"),
+        "type": row.get("type"),
+        "tags": list(row.get("tags") or []),
+        "sources": list(row.get("sources") or []),
+        "snippet": row.get("snippet"),
+        "updated": row.get("updated"),
+        "author": row.get("author"),
+        "author_kind": row.get("author_kind"),
+        "inbound_links": int(row.get("inbound_links") or 0),
+    }
+
+
+def _search_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    rank = float(row.get("rank") or 0.0)
+    return {
+        "id": row.get("id"),
+        "title": row.get("title"),
+        "type": row.get("type"),
+        "tags": list(row.get("tags") or []),
+        "snippet": row.get("context") or row.get("snippet") or "",
+        "rank": rank,
+        "score": rank,
+    }
+
+
+def _inbox_row(row: Mapping[str, Any], wiki_root: Path) -> dict[str, Any]:
+    path = Path(str(row.get("path") or row.get("name") or ""))
+    filename = str(row.get("name") or path.name)
+    return {
+        "filename": filename,
+        "name": filename,
+        "path": path.as_posix(),
+        "status": row.get("status") or "not yet attempted",
+        "classifier": row.get("suggested_class") or row.get("last_classification") or "unknown",
+        "suggested_class": row.get("suggested_class"),
+        "last_classification": row.get("last_classification"),
+        "last_attempted_at": row.get("last_attempted_at"),
+        "size_bytes": int(row.get("size_bytes") or _safe_size(wiki_root / path)),
+    }
+
+
+def _finding_row(finding: Mapping[str, Any]) -> dict[str, Any]:
+    row = dict(finding)
+    row.setdefault("check", row.get("code") or "unknown")
+    row.setdefault("severity", "low")
+    row.setdefault("message", "")
+    return _jsonable(row)
+
+
+def _ingest_row(result: Any) -> dict[str, Any]:
+    return {
+        "wiki": result.wiki,
+        "classified_as": result.classified_as,
+        "source_id": result.source_id,
+        "sha256": result.sha256,
+        "pages_created": list(result.pages_created),
+        "pages_updated": list(result.pages_updated),
+        "raw_snapshot": result.raw_snapshot,
+        "source_url": result.source_url,
+        "commit_id": result.commit_id,
+        "skipped": result.skipped,
+        "message": result.message,
+        "drift_detected": result.drift_detected,
+    }
+
+
+async def _payload_from_request(request: Request | None) -> IngestRequest:
+    if request is None:
+        return IngestRequest()
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        classifier = _form_text(form, "classifier")
+        if _form_text(form, "inbox") in {"1", "true", "yes"}:
+            return IngestRequest(inbox=True, classifier=classifier)
+        path_or_url = _form_text(form, "path_or_url") or _form_text(form, "url")
+        if path_or_url:
+            return IngestRequest(path_or_url=path_or_url, classifier=classifier)
+        for value in form.values():
+            filename = getattr(value, "filename", None)
+            read = getattr(value, "read", None)
+            if filename and callable(read):
+                suffix = Path(str(filename)).suffix or ".txt"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                    handle.write(await read())
+                    return IngestRequest(path_or_url=handle.name, classifier=classifier)
+    if content_type.startswith("application/json"):
+        raw = await request.json()
+        if isinstance(raw, Mapping):
+            return IngestRequest.model_validate(raw)
+    return IngestRequest()
+
+
+def _form_text(form: Mapping[str, Any], key: str) -> str | None:
+    value = form.get(key)
+    if value is None or hasattr(value, "filename"):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _clean_page_id(page_id: str) -> str:
+    try:
+        return validate_page_id(page_id)
+    except WikiNavigationError as exc:
+        raise _not_found("page not found") from exc
+
+
+def _page_path(wiki_root: Path, page_id: str) -> Path | None:
+    rel = Path(page_id + ".md")
+    path = (wiki_root / rel).resolve()
+    try:
+        path.relative_to(wiki_root.resolve())
+    except ValueError:
+        return None
+    return path
+
+
+def _kanban_refs(
+    page_id: str,
+    frontmatter: Mapping[str, Any],
+    projected_refs: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    refs: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in projected_refs:
+        key = (
+            str(row.get("page_id") or page_id),
+            str(row.get("task_id") or ""),
+            str(row.get("direction") or "page->task"),
+        )
+        if key[1]:
+            refs[key] = {
+                "page_id": key[0],
+                "task_id": key[1],
+                "direction": key[2],
+                "created": row.get("created"),
+            }
+    for row in _as_sequence(frontmatter.get("kanban_refs")):
+        if not isinstance(row, Mapping):
+            continue
+        key = (
+            page_id,
+            str(row.get("task_id") or ""),
+            str(row.get("direction") or "page->task"),
+        )
+        if key[1]:
+            refs.setdefault(
+                key,
+                {
+                    "page_id": key[0],
+                    "task_id": key[1],
+                    "direction": key[2],
+                    "created": row.get("created"),
+                },
+            )
+    return [refs[key] for key in sorted(refs)]
+
+
+def _as_sequence(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Sequence):
+        return list(value)
+    return [value]
+
+
+def _safe_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(inner) for key, inner in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return [_jsonable(item) for item in value]
+    try:
+        import json
+
+        json.dumps(value)
+    except TypeError:
+        return str(value)
+    return value
+
+
+def _not_visible() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND_OR_NOT_VISIBLE)
+
+
+def _not_found(message: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
+
+
+def _bad_request(message: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
