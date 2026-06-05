@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "Hermes Wiki contributors" }]
 license = "MIT"
-dependencies = []
+dependencies = [
+  "PyYAML>=6.0.0",
+]
 
 [project.scripts]
 hermes-wiki = "hermes_wiki_cli.cli:main"
