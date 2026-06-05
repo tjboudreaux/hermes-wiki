@@ -116,6 +116,7 @@ def get_page(slug: str, page_id: str) -> dict[str, Any]:
     with db.connect_wiki(wiki_root / "wiki.db") as conn:
         row = db.get_page(conn, clean_page_id)
         projected_refs = db.list_kanban_refs(conn, page_id=clean_page_id)
+        all_pages = db.list_pages(conn, include_archived=False)
     if row is None or int(row.get("archived") or 0):
         raise _not_found("page not found")
     page_path = _page_path(wiki_root, clean_page_id)
@@ -140,6 +141,8 @@ def get_page(slug: str, page_id: str) -> dict[str, Any]:
         "frontmatter": _jsonable(frontmatter),
         "inbound_links": int(row.get("inbound_links") or 0),
         "outbound_links": outbound,
+        "outbound_pages": _linked_page_rows(all_pages, outbound),
+        "inbound_pages": _inbound_page_rows(wiki_root, all_pages, clean_page_id),
         "kanban_refs": _kanban_refs(clean_page_id, frontmatter, projected_refs),
         "history": history,
         "path": page_path.relative_to(wiki_root).as_posix(),
@@ -506,6 +509,59 @@ def _kanban_refs(
                 },
             )
     return [refs[key] for key in sorted(refs)]
+
+
+def _linked_page_rows(
+    all_pages: Sequence[Mapping[str, Any]],
+    page_ids: Sequence[str],
+) -> list[dict[str, Any]]:
+    by_id = {str(row.get("id") or ""): row for row in all_pages}
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page_id in page_ids:
+        clean_id = str(page_id).strip().removesuffix(".md")
+        if not clean_id or clean_id in seen:
+            continue
+        seen.add(clean_id)
+        row = by_id.get(clean_id)
+        rows.append(_page_reference_row(clean_id, row))
+    return rows
+
+
+def _inbound_page_rows(
+    wiki_root: Path,
+    all_pages: Sequence[Mapping[str, Any]],
+    target_page_id: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in all_pages:
+        candidate_id = str(row.get("id") or "")
+        if not candidate_id or candidate_id == target_page_id:
+            continue
+        candidate_path = _page_path(wiki_root, candidate_id)
+        if candidate_path is None or not candidate_path.is_file():
+            continue
+        try:
+            candidate_frontmatter, _body = read_markdown(candidate_path)
+        except (OSError, FrontmatterError):
+            continue
+        links = {
+            str(item).strip().removesuffix(".md")
+            for item in _as_sequence(candidate_frontmatter.get("links"))
+        }
+        if target_page_id in links:
+            rows.append(_page_reference_row(candidate_id, row))
+    rows.sort(key=lambda item: item["id"])
+    return rows
+
+
+def _page_reference_row(page_id: str, row: Mapping[str, Any] | None) -> dict[str, Any]:
+    return {
+        "id": page_id,
+        "title": row.get("title") if row is not None else page_id,
+        "type": row.get("type") if row is not None else None,
+        "exists": row is not None,
+    }
 
 
 def _as_sequence(value: Any) -> list[Any]:

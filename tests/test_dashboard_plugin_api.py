@@ -70,6 +70,11 @@ def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
     assert page["frontmatter"]["id"] == "concepts/agent-memory"
     assert isinstance(page["inbound_links"], int)
     assert isinstance(page["outbound_links"], list)
+    assert any(link["id"] == "entities/hermes" for link in page["outbound_pages"])
+    assert any(
+        link["id"] == "sources/2026-06-05-agent-memory-article"
+        for link in page["inbound_pages"]
+    )
     assert isinstance(page["kanban_refs"], list)
     assert isinstance(page["history"], list)
 
