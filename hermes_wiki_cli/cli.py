@@ -149,7 +149,7 @@ def wiki_command(args: argparse.Namespace) -> int:
                 print(f"{row['name']}: {row['status']} ({row['path']})")
             return 0
         if verb == "plugins":
-            from hermes_wiki.trust import TrustError, list_plugins, trust_plugin
+            from hermes_wiki.trust import TrustError, list_plugins, trust_plugin, untrust_plugin
 
             try:
                 if args.plugins_command == "list":
@@ -174,6 +174,15 @@ def wiki_command(args: argparse.Namespace) -> int:
                         f"Trusted {result['kind']} {result['name']} "
                         f"sha256={result['sha256']}"
                     )
+                    return 0
+                if args.plugins_command == "untrust":
+                    result = untrust_plugin(
+                        name=args.name,
+                        kind=args.kind,
+                        wiki=args.wiki,
+                        author=args.author,
+                    )
+                    print(f"Untrusted {result['message']}")
                     return 0
             except TrustError as exc:
                 print(str(exc), file=sys.stderr)
@@ -289,6 +298,11 @@ def _add_management_subcommands(
     plugin_trust.add_argument("name")
     plugin_trust.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
     plugin_trust.add_argument("--author", help="Override the acting author for attribution")
+    plugin_untrust = plugin_subparsers.add_parser("untrust", help="Revoke custom plugin trust")
+    plugin_untrust.add_argument("name")
+    plugin_untrust.add_argument("--kind", choices=("classifier", "processor"))
+    plugin_untrust.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    plugin_untrust.add_argument("--author", help="Override the acting author for attribution")
 
     purge = subparsers.add_parser("purge", help="Future destructive removal command")
     purge.add_argument("slug", help="Wiki slug that would be purged in a future phase")

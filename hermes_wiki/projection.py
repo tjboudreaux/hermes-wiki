@@ -298,6 +298,7 @@ def _build_tmp_projection(
         db.initialize_wiki(conn)
         _copy_projection_versions(conn, wiki_root / "wiki.db", previous_version_id)
         _copy_support_tables(conn, wiki_root / "wiki.db")
+        _project_trusted_plugins_from_schema(conn, wiki_root)
         for page_file in _iter_page_files(wiki_root):
             page = _page_projection_from_file(wiki_root, page_file)
             expected_pages.append(page)
@@ -368,17 +369,6 @@ def _copy_support_tables(target: sqlite3.Connection, old_db_path: Path) -> None:
                         row["author_kind"],
                     ),
                 )
-            for row in old.execute("SELECT * FROM trusted_plugins ORDER BY kind, name"):
-                db.upsert_trusted_plugin(
-                    target,
-                    name=str(row["name"]),
-                    kind=str(row["kind"]),
-                    path=str(row["path"]),
-                    sha256=str(row["sha256"]),
-                    trusted_at=str(row["trusted_at"]),
-                    author=row["author"],
-                    author_kind=row["author_kind"],
-                )
             for row in old.execute("SELECT * FROM taxonomy ORDER BY tag"):
                 db.add_taxonomy_tag(target, tag=str(row["tag"]), created=row["created"])
             for row in old.execute(
@@ -393,6 +383,12 @@ def _copy_support_tables(target: sqlite3.Connection, old_db_path: Path) -> None:
                 )
     except sqlite3.DatabaseError:
         return
+
+
+def _project_trusted_plugins_from_schema(target: sqlite3.Connection, wiki_root: Path) -> None:
+    from hermes_wiki.trust import project_schema_trust_records
+
+    project_schema_trust_records(wiki_root, target)
 
 
 def _validate_tmp_projection(tmp_db_path: Path, expected_pages: list[_PageProjection]) -> None:

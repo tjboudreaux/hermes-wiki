@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.util
+import inspect
 import json
 import os
 import re
+import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Iterable, Iterator
@@ -14,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -151,6 +155,24 @@ class DefaultProcessor:
             confidence=request.label.confidence,
         )
         return [GeneratedPage(source_page), GeneratedPage(derived_page)]
+
+
+class CustomProcessor:
+    """Trusted custom processor loaded from a per-wiki path+sha record."""
+
+    def __init__(self, *, name: str, plugin_path: Path) -> None:
+        self.name = name
+        self.plugin_path = plugin_path
+
+    def process(self, request: ProcessRequest) -> list[GeneratedPage]:
+        module = _load_processor_module(self.name, self.plugin_path)
+        process = getattr(module, "process", None)
+        if not callable(process):
+            raise ProcessorError(f"trusted processor {self.name} does not export process")
+        result = _call_custom_processor(process, request)
+        if not isinstance(result, list):
+            raise ProcessorError(f"trusted processor {self.name} must return a list")
+        return [_coerce_generated_page(item) for item in result]
 
 
 def ingest_source(
@@ -321,7 +343,9 @@ def _ingest_source_content_locked(
         now=now,
         today=today,
     )
-    selected_processor = processor or DefaultProcessor()
+    selected_processor = (
+        processor or _trusted_processor_for_label(wiki_root, label.name) or DefaultProcessor()
+    )
 
     try:
         planned_pages = selected_processor.process(request)
@@ -665,6 +689,82 @@ def classify_source(
     return _classify_source(name, content, wiki_root=wiki_root)
 
 
+def _trusted_processor_for_label(wiki_root: Path, label_name: str) -> Processor | None:
+    wiki_db = wiki_root / "wiki.db"
+    if not wiki_db.exists():
+        return None
+    root = wiki_root.resolve()
+    with db.connect_wiki(wiki_db) as conn:
+        rows = [
+            row
+            for row in db.list_trusted_plugins(conn)
+            if str(row.get("kind")) == "processor" and str(row.get("name")) == label_name
+        ]
+    if not rows:
+        return None
+    row = sorted(rows, key=lambda item: str(item.get("trusted_at") or ""))[-1]
+    plugin_path = (wiki_root / str(row.get("path") or "")).resolve()
+    try:
+        plugin_path.relative_to(root)
+    except ValueError:
+        return None
+    if not plugin_path.is_file():
+        return None
+    if projection.sha256_file(plugin_path) != str(row.get("sha256") or ""):
+        return None
+    return CustomProcessor(name=label_name, plugin_path=plugin_path)
+
+
+def _load_processor_module(processor_name: str, plugin_path: Path) -> ModuleType:
+    digest = projection.sha256_file(plugin_path)[:16]
+    module_name = f"hermes_wiki_trusted_processor_{processor_name}_{digest}"
+    spec = importlib.util.spec_from_file_location(module_name, plugin_path)
+    if spec is None or spec.loader is None:
+        raise ProcessorError(f"could not load trusted processor: {processor_name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _call_custom_processor(process: Any, request: ProcessRequest) -> Any:
+    try:
+        signature = inspect.signature(process)
+    except (TypeError, ValueError):
+        return process(request)
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
+    ]
+    required = [
+        parameter
+        for parameter in positional
+        if parameter.default is inspect.Signature.empty
+    ]
+    if len(required) <= 1:
+        return process(request)
+    safe_name = Path(request.source_ref).name or request.source_page_filename
+    with tempfile.TemporaryDirectory(prefix="hermes-wiki-process-") as temp_dir:
+        raw_path = Path(temp_dir) / safe_name
+        raw_path.write_bytes(request.source_bytes)
+        return process(raw_path, request.label)
+
+
+def _coerce_generated_page(item: Any) -> GeneratedPage:
+    if isinstance(item, GeneratedPage):
+        return item
+    if isinstance(item, WikiPage):
+        return GeneratedPage(item)
+    if isinstance(item, dict):
+        data = dict(item)
+        for key in ("tags", "sources", "links"):
+            if key in data and not isinstance(data[key], tuple):
+                data[key] = tuple(data[key] or ())
+        return GeneratedPage(WikiPage(**data))
+    raise ProcessorError("trusted processor returned an unsupported page object")
+
+
 @dataclass(frozen=True, slots=True)
 class _SourceContent:
     ref: str
@@ -947,6 +1047,7 @@ def _record_ingest_rows(
             (db_hash,),
         )
         conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def _update_registry_after_ingest(wiki_root: Path, *, wiki_slug: str, now: str) -> None:

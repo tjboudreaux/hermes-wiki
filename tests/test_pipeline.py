@@ -338,6 +338,253 @@ def test_trusted_custom_classifier_runs_only_after_builtins(
     assert _latest_classified_as(wiki_root) == "custom-catchall"
 
 
+def test_untrusted_classifier_file_is_visible_but_never_loaded(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """A dropped classifier file is listed but not imported/executed before trust."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    side_effect = wiki_root / "plugins" / "classifiers" / "untrusted-loaded.txt"
+    plugin = wiki_root / "plugins" / "classifiers" / "untrusted.py"
+    plugin.write_text(
+        "\n".join(
+            [
+                "from pathlib import Path",
+                f"Path({str(side_effect)!r}).write_text('imported', encoding='utf-8')",
+                "",
+                "def classify(path: Path):",
+                "    Path(path).with_suffix('.executed').write_text('executed', encoding='utf-8')",
+                "    return 'untrusted-claim'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    unknown = sample_source_path("unknown")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "plugins", "list", "--wiki", "ai-tooling") == 0
+    listing = capsys.readouterr().out
+    assert "classifier article: built-in" in listing
+    assert "classifier paper: built-in" in listing
+    assert "classifier transcript: built-in" in listing
+    assert "classifier untrusted: untrusted" in listing
+
+    assert _run_cli(tmp_path, "ingest", str(unknown), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "unknown"
+    assert not side_effect.exists()
+
+
+def test_plugin_trust_missing_file_fails_without_schema_or_db_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Trusting a nonexistent plugin cannot write a path+sha trust record."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    schema_before = (wiki_root / "SCHEMA.md").read_text(encoding="utf-8")
+    capsys.readouterr()
+
+    assert (
+        _run_cli(tmp_path, "plugins", "trust", "classifier", "ghost", "--wiki", "ai-tooling")
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert "does not exist" in captured.err
+    assert (wiki_root / "SCHEMA.md").read_text(encoding="utf-8") == schema_before
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM trusted_plugins WHERE name='ghost'"
+        ).fetchone() == (0,)
+
+
+def test_changed_classifier_hash_disables_until_retrusted(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """A stale path+sha trust record disables changed classifier code until re-trust."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    plugin = wiki_root / "plugins" / "classifiers" / "magic.py"
+    plugin.write_text(
+        "def classify(path):\n"
+        "    return 'magic' if 'MAGIC' in path.read_text(encoding='utf-8') else None\n",
+        encoding="utf-8",
+    )
+    assert (
+        _run_cli(tmp_path, "plugins", "trust", "classifier", "magic", "--wiki", "ai-tooling")
+        == 0
+    )
+    first = tmp_path / "first.magic"
+    second = tmp_path / "second.magic"
+    third = tmp_path / "third.magic"
+    first.write_text("MAGIC one", encoding="utf-8")
+    second.write_text("MAGIC two", encoding="utf-8")
+    third.write_text("MAGIC three", encoding="utf-8")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", str(first), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "magic"
+
+    plugin.write_text(
+        "def classify(path):\n"
+        "    return 'magic-changed' if 'MAGIC' in path.read_text(encoding='utf-8') else None\n",
+        encoding="utf-8",
+    )
+    assert _run_cli(tmp_path, "plugins", "list", "--wiki", "ai-tooling") == 0
+    assert "magic" in capsys.readouterr().out
+    assert _run_cli(tmp_path, "ingest", str(second), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "unknown"
+
+    assert (
+        _run_cli(tmp_path, "plugins", "trust", "classifier", "magic", "--wiki", "ai-tooling")
+        == 0
+    )
+    assert _run_cli(tmp_path, "ingest", str(third), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "magic-changed"
+
+
+def test_custom_processor_runs_only_after_trust(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """A processor file is listed while untrusted and only affects ingest after trust."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    classifier = wiki_root / "plugins" / "classifiers" / "widget.py"
+    processor = wiki_root / "plugins" / "processors" / "widget.py"
+    classifier.write_text(
+        "def classify(path):\n"
+        "    return 'widget' if 'WIDGET' in path.read_text(encoding='utf-8') else None\n",
+        encoding="utf-8",
+    )
+    processor.write_text(
+        "\n".join(
+            [
+                "from hermes_wiki.models import WikiPage",
+                "",
+                "def process(request):",
+                "    return [WikiPage(",
+                "        id='concepts/widget-custom-output',",
+                "        title='Widget Custom Output',",
+                "        type='concept',",
+                "        body='Distinctive Processor Output',",
+                "        tags=('widget',),",
+                "        sources=(request.snapshot_relpath,),",
+                "    )]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        _run_cli(tmp_path, "plugins", "trust", "classifier", "widget", "--wiki", "ai-tooling")
+        == 0
+    )
+    before = tmp_path / "before.widget"
+    after = tmp_path / "after.widget"
+    before.write_text("WIDGET before", encoding="utf-8")
+    after.write_text("WIDGET after", encoding="utf-8")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "plugins", "list", "--wiki", "ai-tooling") == 0
+    listing = capsys.readouterr().out
+    assert "processor default: built-in" in listing
+    assert "processor widget: untrusted" in listing
+    assert _run_cli(tmp_path, "ingest", str(before), "--wiki", "ai-tooling") == 0
+    assert not (wiki_root / "concepts" / "widget-custom-output.md").exists()
+
+    assert (
+        _run_cli(tmp_path, "plugins", "trust", "processor", "widget", "--wiki", "ai-tooling")
+        == 0
+    )
+    assert _run_cli(tmp_path, "ingest", str(after), "--wiki", "ai-tooling") == 0
+    assert (wiki_root / "concepts" / "widget-custom-output.md").is_file()
+    assert "Distinctive Processor Output" in (
+        wiki_root / "concepts" / "widget-custom-output.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_plugins_untrust_revokes_schema_projection_and_execution(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Untrust removes canonical/projection records and stops future execution."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    plugin = wiki_root / "plugins" / "classifiers" / "revocable.py"
+    plugin.write_text("def classify(path):\n    return 'revocable'\n", encoding="utf-8")
+    assert (
+        _run_cli(
+            tmp_path,
+            "plugins",
+            "trust",
+            "classifier",
+            "revocable",
+            "--wiki",
+            "ai-tooling",
+        )
+        == 0
+    )
+    first = tmp_path / "first.rev"
+    second = tmp_path / "second.rev"
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+    capsys.readouterr()
+
+    assert _run_cli(tmp_path, "ingest", str(first), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "revocable"
+    assert _run_cli(tmp_path, "plugins", "untrust", "revocable", "--wiki", "ai-tooling") == 0
+    assert "Untrusted" in capsys.readouterr().out
+    assert "trusted-plugin classifier:revocable" not in (
+        wiki_root / "SCHEMA.md"
+    ).read_text(encoding="utf-8")
+    assert "untrust" in (wiki_root / "log.md").read_text(encoding="utf-8")
+    with sqlite3.connect(wiki_root / "wiki.db") as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM trusted_plugins WHERE name='revocable'"
+        ).fetchone() == (0,)
+    assert "SCHEMA.md" in _git(wiki_root, "log", "-1", "--stat").stdout
+
+    assert _run_cli(tmp_path, "ingest", str(second), "--wiki", "ai-tooling") == 0
+    assert _latest_classified_as(wiki_root) == "unknown"
+
+
+def test_projection_rebuild_projects_trust_from_schema_and_is_per_wiki(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """SCHEMA.md is canonical and trust records do not leak between wikis."""
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    assert _run_cli(tmp_path, "create", "other-wiki") == 0
+    root_a = tmp_path / "wikis" / "ai-tooling"
+    root_b = tmp_path / "wikis" / "other-wiki"
+    for root in (root_a, root_b):
+        (root / "plugins" / "classifiers" / "local.py").write_text(
+            "def classify(path):\n    return 'local-plugin'\n",
+            encoding="utf-8",
+        )
+    assert (
+        _run_cli(tmp_path, "plugins", "trust", "classifier", "local", "--wiki", "ai-tooling")
+        == 0
+    )
+    capsys.readouterr()
+
+    (root_a / "wiki.db").unlink()
+    assert _run_cli(tmp_path, "lint", "--wiki", "ai-tooling") == 0
+    with sqlite3.connect(root_a / "wiki.db") as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM trusted_plugins WHERE name='local' AND kind='classifier'"
+        ).fetchone() == (1,)
+    with sqlite3.connect(root_b / "wiki.db") as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM trusted_plugins WHERE name='local'"
+        ).fetchone() == (0,)
+    source_b = tmp_path / "other.local"
+    source_b.write_text("other local", encoding="utf-8")
+    assert _run_cli(tmp_path, "ingest", str(source_b), "--wiki", "other-wiki") == 0
+    assert _latest_classified_as(root_b) == "unknown"
+
+
 def test_ingest_cross_links_existing_page_and_increments_inbound_links(tmp_path: Path) -> None:
     """A later ingest mentioning an existing page cross-links and increments inbound_links."""
     assert _run_cli(tmp_path, "create", "ai-tooling") == 0
