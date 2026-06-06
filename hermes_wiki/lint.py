@@ -324,6 +324,8 @@ def _page_content_findings(
             resolved_target = (page["path"].parent / target.split("#", 1)[0]).resolve()
             if resolved_target.suffix != ".md":
                 continue
+            # Raw Source Snapshots are legitimate non-page markdown evidence files
+            # inside the wiki root, so do not flag links to them as broken/orphaned.
             if resolved_target not in existing_files and resolved_target.is_file():
                 try:
                     resolved_target.relative_to(wiki_root.resolve())
