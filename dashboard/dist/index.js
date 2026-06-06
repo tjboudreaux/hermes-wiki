@@ -52,7 +52,7 @@
         Card,
         { className: "hermes-wiki-empty" },
         h(CardHeader, null, h(CardTitle, null, props.title)),
-        h(CardContent, null, props.body)
+        h(CardContent, null, h("p", null, props.body), props.children || null)
       );
     }, ErrorState = function(props) {
       return h(
@@ -107,6 +107,10 @@
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState("");
       const [query, setQuery] = useState("");
+      const [createSlug, setCreateSlug] = useState("");
+      const [createDomain, setCreateDomain] = useState("");
+      const [createError, setCreateError] = useState("");
+      const [creating, setCreating] = useState(false);
       const load = useCallback(() => {
         setLoading(true);
         setError("");
@@ -123,6 +127,29 @@
         }),
         [wikis, normalizedQuery]
       );
+      const createWiki = (event) => {
+        event.preventDefault();
+        const slug = createSlug.trim();
+        const domain = createDomain.trim();
+        setCreateError("");
+        if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug)) {
+          setCreateError("Use lowercase letters, digits, and internal hyphens.");
+          return;
+        }
+        setCreating(true);
+        SDK.fetchJSON("/api/plugins/wiki/wikis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug, domain: domain || null })
+        }).then((created) => {
+          setWikis(
+            (previous) => sortedWikis(previous.filter((wiki) => wiki.slug !== created.slug).concat(created))
+          );
+          setCreateSlug("");
+          setCreateDomain("");
+          navigatePath(pathForWiki(created.slug));
+        }).catch((err) => setCreateError(messageOf(err))).finally(() => setCreating(false));
+      };
       if (loading) return h(LoadingState, { label: "Loading Wikis\u2026" });
       if (error) return h(ErrorState, { title: "Could not load Wikis", message: error, onRetry: load });
       return h(
@@ -134,6 +161,15 @@
           h("div", null, h("p", { className: "hermes-wiki-eyebrow" }, "Hermes Wiki"), h("h1", null, "Wikis")),
           h(Badge, null, `${wikis.length} visible`)
         ),
+        h(CreateWikiForm, {
+          slug: createSlug,
+          domain: createDomain,
+          error: createError,
+          creating,
+          onSlug: setCreateSlug,
+          onDomain: setCreateDomain,
+          onSubmit: createWiki
+        }),
         h(
           "div",
           { className: "hermes-wiki-toolbar" },
@@ -147,8 +183,55 @@
         ),
         filtered.length ? h("section", { className: "hermes-wiki-grid" }, ...filtered.map((wiki) => h(WikiCard, { key: wiki.slug, wiki }))) : h(EmptyState, {
           title: wikis.length ? "No Wikis match that filter" : "No visible Wikis",
-          body: wikis.length ? "Clear the filter to restore the full visible Wiki list." : "Create a Wiki from the API or CLI to make it appear in this dashboard tab."
+          body: wikis.length ? "Clear the filter to see the complete list again." : "Create the first Wiki here, then ingest sources from the CLI or inbox.",
+          children: wikis.length ? h(Button, { onClick: () => setQuery("") }, "Clear filter") : h("span", { className: "hermes-wiki-muted" }, "Suggested slug: ai-research, product-intel, support-playbooks")
         })
+      );
+    }, sortedWikis = function(wikis) {
+      return wikis.slice().sort((left, right) => left.slug.localeCompare(right.slug));
+    }, CreateWikiForm = function(props) {
+      return h(
+        Card,
+        { className: "hermes-wiki-create" },
+        h(
+          CardHeader,
+          { className: "hermes-wiki-card-header" },
+          h("div", null, h(CardTitle, null, "Create a Wiki"), h("p", { className: "hermes-wiki-muted" }, "Start a durable knowledge base without leaving the dashboard.")),
+          h(Badge, null, "New")
+        ),
+        h(
+          CardContent,
+          null,
+          h(
+            "form",
+            { className: "hermes-wiki-create-form", onSubmit: props.onSubmit },
+            h(
+              "label",
+              null,
+              "Slug",
+              h(Input, {
+                "aria-label": "Wiki slug",
+                placeholder: "ai-research",
+                value: props.slug,
+                pattern: "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?",
+                onChange: (event) => props.onSlug(event.target.value)
+              })
+            ),
+            h(
+              "label",
+              null,
+              "Domain",
+              h(Input, {
+                "aria-label": "Wiki domain",
+                placeholder: "AI research papers and implementation notes",
+                value: props.domain,
+                onChange: (event) => props.onDomain(event.target.value)
+              })
+            ),
+            h(Button, { type: "submit", disabled: props.creating }, props.creating ? "Creating\u2026" : "Create Wiki")
+          ),
+          props.error ? h("p", { className: "hermes-wiki-health-bad" }, props.error) : null
+        )
       );
     }, WikiRoute = function(props) {
       const [summary, setSummary] = useState(null);
@@ -282,7 +365,22 @@
                   "Reset filters"
                 )
               ),
-              pages.items.length ? h("div", { className: "hermes-wiki-page-list" }, ...pages.items.map((page) => h(PageListRow, { key: page.id, slug: props.slug, page }))) : h(EmptyState, { title: "No pages found", body: "No pages match the current filters." }),
+              pages.items.length ? h("div", { className: "hermes-wiki-page-list" }, ...pages.items.map((page) => h(PageListRow, { key: page.id, slug: props.slug, page }))) : h(EmptyState, {
+                title: canReset ? "No pages match those filters" : "No pages yet",
+                body: canReset ? "Reset filters to see the full page list." : "Ingest a source or process the inbox to create the first curated Wiki Page.",
+                children: canReset ? h(Button, {
+                  onClick: () => {
+                    setTypeFilter("");
+                    setTagFilter("");
+                    setPageNumber(1);
+                  }
+                }, "Reset filters") : h(
+                  "div",
+                  { className: "hermes-wiki-empty-actions" },
+                  h("a", { className: "hermes-wiki-action-link", href: pathForInbox(props.slug), onClick: onNavigate(pathForInbox(props.slug)) }, "Open Inbox"),
+                  h("a", { className: "hermes-wiki-action-link", href: pathForSearch("", props.slug), onClick: onNavigate(pathForSearch("", props.slug)) }, "Search this Wiki")
+                )
+              }),
               h(PaginationControls, { pagination: pages.pagination, onPage: setPageNumber })
             )
           ),
@@ -351,7 +449,7 @@
           CardContent,
           { className: "hermes-wiki-health-card" },
           h(Badge, { className: `hermes-wiki-health hermes-wiki-health-${healthTone(props.score)}` }, `Score ${formatScore(props.score)}`),
-          severities.length ? h("ul", null, ...severities.map(([severity, count]) => h("li", { key: severity }, `${severity}: ${count}`))) : h("p", null, "No lint findings reported."),
+          severities.length ? h("ul", null, ...severities.map(([severity, count]) => h("li", { key: severity }, `${severity}: ${count}`))) : h("p", null, "No lint findings. The projection and page metadata are in sync."),
           props.slug ? h("a", { className: "hermes-wiki-action-link", href: pathForHealth(props.slug), onClick: onNavigate(pathForHealth(props.slug)) }, "Open Health") : null
         )
       );
@@ -375,7 +473,7 @@
                 h("small", null, `${entry.author || "unknown"} \xB7 ${entry.author_kind || "unknown"} \xB7 ${relativeTime(entry.timestamp || entry.created)}`)
               )
             )
-          ) : h("p", null, "No activity recorded yet."),
+          ) : h("p", null, "No activity yet. Creates, ingests, links, and lint repairs appear here."),
           props.slug ? h("a", { className: "hermes-wiki-action-link", href: pathForLog(props.slug), onClick: onNavigate(pathForLog(props.slug)) }, "Open Activity") : null
         )
       );
@@ -482,7 +580,7 @@
             )
           )
         ),
-        findings.length === 0 ? h(EmptyState, { title: "Healthy Wiki", body: "No lint findings were reported for this Wiki." }) : filteredFindings.length ? h(
+        findings.length === 0 ? h(EmptyState, { title: "Healthy Wiki", body: "No lint findings. Keep ingesting sources and this panel will flag drift, missing links, or projection issues." }) : filteredFindings.length ? h(
           "section",
           { className: "hermes-wiki-finding-list", "data-testid": "wiki-health-findings" },
           ...filteredFindings.map((finding, index) => h(HealthFindingRow, { key: `${finding.check || finding.code || "finding"}-${index}`, finding }))
@@ -639,7 +737,14 @@
           pagination ? h(PaginationControls, { pagination, onPage: setPageNumber }) : null
         ) : h(EmptyState, {
           title: "No activity entries",
-          body: canReset ? "No activity entries match the selected filters." : "No activity has been recorded for this Wiki yet."
+          body: canReset ? "No activity entries match the selected filters." : "No activity yet. Wiki creates, ingests, links, and repairs will appear here with attribution.",
+          children: canReset ? h(Button, {
+            onClick: () => {
+              setAuthorFilter("");
+              setKindFilter("");
+              setPageNumber(1);
+            }
+          }, "Reset filters") : null
         })
       );
     }, activityUrl = function(slug, page, author, kind, pageSize) {
@@ -886,7 +991,7 @@
           ),
           h(Button, { type: "submit" }, "Search")
         ),
-        loading ? h(LoadingState, { label: "Searching Wikis\u2026" }) : error ? h(ErrorState, { title: "Search failed", message: error, onRetry: load }) : !props.query.trim() ? h(EmptyState, { title: "Search all visible Wikis", body: "Enter a term to search Wiki pages with BM25 ranking." }) : results.length ? h("section", { className: "hermes-wiki-result-list" }, ...results.map((result) => h(SearchResultRow, { key: `${result.wiki}:${result.id}`, result }))) : h(EmptyState, { title: "No results", body: "No visible Wiki pages matched that query." })
+        loading ? h(LoadingState, { label: "Searching Wikis\u2026" }) : error ? h(ErrorState, { title: "Search failed", message: error, onRetry: load }) : !props.query.trim() ? h(EmptyState, { title: "Search all visible Wikis", body: "Search page titles, body text, tags, and normalized technical terms across visible Wikis." }) : results.length ? h("section", { className: "hermes-wiki-result-list" }, ...results.map((result) => h(SearchResultRow, { key: `${result.wiki}:${result.id}`, result }))) : h(EmptyState, { title: "No results", body: "Try a broader term, remove the Wiki scope, or ingest a source that covers this topic." })
       );
     }, SearchResultRow = function(props) {
       const result = props.result;
