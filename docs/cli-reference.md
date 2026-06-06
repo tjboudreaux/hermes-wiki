@@ -141,6 +141,17 @@ hermes-wiki plugins trust processor <name> [--wiki <slug>]
 hermes-wiki plugins untrust <name> [--wiki <slug>]
 ```
 
+### `skills`
+
+Show or set the per-wiki skill assignments that guide agent ingestion and
+writing. Defaults are the packaged `wiki:wiki-ingestion` and
+`wiki:wiki-writing` skills; assignments are stored canonically in `SCHEMA.md`.
+
+```bash
+hermes-wiki skills show [--wiki <slug>]
+hermes-wiki skills set <ingestion|writing> <skill-name> [--wiki <slug>]
+```
+
 ### `monitor`
 
 Configure recurring source monitoring.
