@@ -22,6 +22,10 @@ class FakePluginContext:
     def __init__(self) -> None:
         self.cli_commands: dict[str, dict[str, Any]] = {}
         self.slash_commands: dict[str, dict[str, Any]] = {}
+        self.skills: dict[str, dict[str, Any]] = {}
+
+    def register_skill(self, name: str, path: Any, description: str = "") -> None:
+        self.skills[name] = {"name": name, "path": path, "description": description}
 
     def register_cli_command(
         self,
@@ -178,6 +182,37 @@ def test_slash_handler_equivalence(monkeypatch: Any, tmp_path: Any) -> None:
     via_plugin = handler("list")
 
     assert direct == via_plugin
+
+
+def test_register_exposes_packaged_wiki_skills() -> None:
+    """register(ctx) registers the three packaged SKILL.md files."""
+    from adapters.hermes.cli_plugin import SKILLS_ROOT, register
+
+    ctx = FakePluginContext()
+    register(ctx)
+
+    assert set(ctx.skills) == {"wiki-commands", "wiki-ingestion", "wiki-writing"}
+    for name, skill in ctx.skills.items():
+        path = skill["path"]
+        assert path == SKILLS_ROOT / name / "SKILL.md"
+        assert path.is_file()
+        assert skill["description"]
+        assert f"name: {name}" in path.read_text(encoding="utf-8")
+
+
+def test_register_tolerates_context_without_register_skill() -> None:
+    """Older Hermes contexts without register_skill still get CLI + slash."""
+    from adapters.hermes.cli_plugin import register
+
+    class LegacyContext(FakePluginContext):
+        register_skill = None  # type: ignore[assignment]
+
+    ctx = LegacyContext()
+    register(ctx)
+
+    assert "wiki" in ctx.cli_commands
+    assert "wiki" in ctx.slash_commands
+    assert ctx.skills == {}
 
 
 def test_entry_point_is_declared_in_pyproject() -> None:
