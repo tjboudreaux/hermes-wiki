@@ -298,6 +298,53 @@
   margin-top: 0.75rem;
 }
 
+.hermes-wiki-inbox-open {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hermes-wiki-inbox-open:hover,
+.hermes-wiki-inbox-open:focus-visible {
+  color: var(--primary, #a78bfa);
+  text-decoration: underline;
+}
+
+.hermes-wiki-inbox-file-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.hermes-wiki-inbox-file-editor textarea {
+  background: var(--background, #0f172a);
+  border: 1px solid var(--border, #334155);
+  border-radius: 0.5rem;
+  color: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  min-height: 22rem;
+  padding: 0.75rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.hermes-wiki-inbox-file-editor textarea:focus-visible {
+  border-color: var(--primary, #8b5cf6);
+  outline: none;
+}
+
+.hermes-wiki-inbox-file-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.hermes-wiki-inbox-file-delete {
+  border-color: color-mix(in srgb, var(--destructive, #ef4444) 45%, var(--border, #334155));
+}
+
 .hermes-wiki-page-list {
   display: flex;
   flex-direction: column;

@@ -21,6 +21,8 @@
       return `${pathForWiki(slug)}/${encodePageId(pageId)}`;
     }, pathForInbox = function(slug) {
       return `${pathForWiki(slug)}/inbox`;
+    }, pathForInboxFile = function(slug, filename) {
+      return `${pathForInbox(slug)}/${encodeURIComponent(filename)}`;
     }, pathForHealth = function(slug) {
       return `${pathForWiki(slug)}/health`;
     }, pathForLog = function(slug) {
@@ -1119,6 +1121,7 @@
           ...items.map(
             (item) => h(InboxItemRow, {
               key: item.filename,
+              slug: props.slug,
               item,
               busy: busyFile === item.filename,
               onOverride: overrideClassifier
@@ -1130,6 +1133,7 @@
       const item = props.item;
       const oversized = item.status === "oversized" || item.classifier === "oversized";
       const classes = ["article", "paper", "transcript", "unknown"];
+      const fileHref = pathForInboxFile(props.slug, item.filename);
       return h(
         Card,
         { className: oversized ? "hermes-wiki-inbox-item hermes-wiki-inbox-oversized" : "hermes-wiki-inbox-item" },
@@ -1139,7 +1143,11 @@
           h(
             "div",
             null,
-            h(CardTitle, null, item.filename),
+            h(
+              CardTitle,
+              null,
+              h("a", { className: "hermes-wiki-inbox-open", href: fileHref, onClick: onNavigate(fileHref) }, item.filename)
+            ),
             h("p", { className: "hermes-wiki-muted" }, item.path)
           ),
           h("div", { className: "hermes-wiki-tags" }, h(Badge, null, item.classifier || "unknown"), h(Badge, { className: oversized ? "hermes-wiki-health-bad" : "" }, item.status))
@@ -1162,6 +1170,120 @@
                 },
                 item.classifier === classifier ? `${classifier} \u2713` : `Set ${classifier}`
               )
+            )
+          )
+        )
+      );
+    }, isUnsupportedContent = function(message) {
+      return /413|415|too large|not valid|not utf-8|unsupported media/i.test(message);
+    }, InboxFileRoute = function(props) {
+      const [detail, setDetail] = useState(null);
+      const [content, setContent] = useState("");
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState("");
+      const [saving, setSaving] = useState(false);
+      const [deleting, setDeleting] = useState(false);
+      const [notice, setNotice] = useState("");
+      const [readOnly, setReadOnly] = useState(false);
+      const fileUrl = `/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/inbox/${encodeURIComponent(props.filename)}`;
+      const load = useCallback(() => {
+        setLoading(true);
+        setError("");
+        setNotice("");
+        setReadOnly(false);
+        SDK.fetchJSON(fileUrl).then((row) => {
+          setDetail(row);
+          setContent(row.content || "");
+        }).catch((err) => {
+          const message = messageOf(err);
+          if (isUnsupportedContent(message)) {
+            setReadOnly(true);
+            setNotice("This file cannot be viewed or edited here (binary or oversized). You can still delete it.");
+          } else {
+            setError(message);
+          }
+        }).finally(() => setLoading(false));
+      }, [props.slug, props.filename]);
+      useEffect(() => {
+        load();
+      }, [load]);
+      const save = () => {
+        setSaving(true);
+        setError("");
+        setNotice("");
+        SDK.fetchJSON(fileUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content })
+        }).then((row) => {
+          setDetail(row);
+          setContent(row.content || "");
+          setNotice("Saved.");
+        }).catch((err) => setError(messageOf(err))).finally(() => setSaving(false));
+      };
+      const remove = () => {
+        if (!window.confirm(`Delete ${props.filename} from the inbox? This cannot be undone.`)) return;
+        setDeleting(true);
+        setError("");
+        setNotice("");
+        SDK.fetchJSON(fileUrl, { method: "DELETE" }).then(() => navigatePath(pathForInbox(props.slug))).catch((err) => {
+          setError(messageOf(err));
+          setDeleting(false);
+        });
+      };
+      if (loading) return h(LoadingState, { label: "Loading Inbox File\u2026" });
+      if (error && !detail && !readOnly) {
+        if (isNotFound(error)) {
+          return h(
+            "main",
+            { className: "hermes-wiki" },
+            h(BackLink, { href: pathForInbox(props.slug), label: "\u2190 Back to Inbox" }),
+            h(ErrorState, { title: "Inbox file not found", message: "This inbox file was not found or is not visible." })
+          );
+        }
+        return h(ErrorState, { title: "Failed to load Inbox File", message: error, onRetry: load });
+      }
+      const dirty = detail ? content !== detail.content : false;
+      return h(
+        "main",
+        { className: "hermes-wiki" },
+        h(BackLink, { href: pathForInbox(props.slug), label: "\u2190 Back to Inbox" }),
+        h(
+          "header",
+          { className: "hermes-wiki-detail-hero" },
+          h(
+            "div",
+            null,
+            h("p", { className: "hermes-wiki-eyebrow" }, "Inbox File"),
+            h("h1", null, props.filename),
+            h(
+              "p",
+              { className: "hermes-wiki-muted" },
+              detail ? `${detail.path} \xB7 ${formatBytes(detail.size_bytes)}` : `raw/inbox/${props.filename}`
+            )
+          ),
+          detail ? h("div", { className: "hermes-wiki-tags" }, h(Badge, null, detail.classifier || "unknown"), h(Badge, null, detail.status)) : null
+        ),
+        error ? h(ErrorState, { title: "Inbox file update failed", message: error, onRetry: load }) : null,
+        notice ? h(Card, { className: "hermes-wiki-notice" }, h(CardContent, null, notice)) : null,
+        h(
+          "section",
+          { className: "hermes-wiki-inbox-file-editor" },
+          readOnly ? null : h("textarea", {
+            value: content,
+            disabled: saving || deleting,
+            spellCheck: false,
+            "aria-label": `Edit ${props.filename}`,
+            onChange: (event) => setContent(event.target.value)
+          }),
+          h(
+            "div",
+            { className: "hermes-wiki-inbox-file-actions" },
+            readOnly ? null : h(Button, { disabled: saving || deleting || !dirty, onClick: save }, saving ? "Saving\u2026" : "Save"),
+            h(
+              Button,
+              { className: "hermes-wiki-inbox-file-delete", disabled: saving || deleting, onClick: remove },
+              deleting ? "Deleting\u2026" : "Delete"
             )
           )
         )
@@ -1273,6 +1395,9 @@
       const [slug, ...pageParts] = parts;
       if (!pageParts.length) return { kind: "wiki", slug };
       if (pageParts.length === 1 && pageParts[0] === "inbox") return { kind: "inbox", slug };
+      if (pageParts.length === 2 && pageParts[0] === "inbox") {
+        return { kind: "inboxFile", slug, filename: pageParts[1] };
+      }
       if (pageParts.length === 1 && pageParts[0] === "health") return { kind: "health", slug };
       if (pageParts.length === 1 && pageParts[0] === "log") return { kind: "activity", slug };
       return { kind: "page", slug, pageId: pageParts.join("/") };
@@ -1294,6 +1419,9 @@
       if (route.kind === "search") return h(SearchRoute, { key: `search-${route.query}-${route.scope}`, query: route.query, scope: route.scope });
       if (route.kind === "wiki") return h(WikiRoute, { key: `wiki-${route.slug}`, slug: route.slug });
       if (route.kind === "inbox") return h(InboxRoute, { key: `inbox-${route.slug}`, slug: route.slug });
+      if (route.kind === "inboxFile") {
+        return h(InboxFileRoute, { key: `inbox-file-${route.slug}-${route.filename}`, slug: route.slug, filename: route.filename });
+      }
       if (route.kind === "health") return h(HealthRoute, { key: `health-${route.slug}`, slug: route.slug });
       if (route.kind === "activity") return h(ActivityRoute, { key: `activity-${route.slug}`, slug: route.slug });
       return h(PageRoute, { key: `page-${route.slug}-${route.pageId}`, slug: route.slug, pageId: route.pageId });
