@@ -55,6 +55,12 @@ type PageListResponse = {
   filters: { type?: string | null; tag?: string | null };
 };
 
+type PageFacetsResponse = {
+  wiki: string;
+  types: string[];
+  tags: string[];
+};
+
 type SearchResult = {
   wiki: string;
   id: string;
@@ -101,6 +107,12 @@ type ActivityResponse = {
   items: ActivityEntry[];
   pagination: Pagination;
   filters?: { author?: string | null; kind?: string | null };
+};
+
+type ActivityFacetsResponse = {
+  wiki: string;
+  authors: string[];
+  kinds: string[];
 };
 
 type HealthFinding = {
@@ -392,7 +404,7 @@ if (SDK && window.__HERMES_PLUGINS__) {
   function WikiRoute(props: { slug: string }) {
     const [summary, setSummary] = useState<WikiSummary | null>(null);
     const [pages, setPages] = useState<PageListResponse | null>(null);
-    const [allPages, setAllPages] = useState<PageListItem[]>([]);
+    const [facets, setFacets] = useState<PageFacetsResponse | null>(null);
     const [activity, setActivity] = useState<ActivityEntry[]>([]);
     const [health, setHealth] = useState<HealthReport | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
@@ -407,14 +419,14 @@ if (SDK && window.__HERMES_PLUGINS__) {
       Promise.all([
         SDK.fetchJSON<WikiSummary>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
         SDK.fetchJSON<PageListResponse>(pageListUrl(props.slug, pageNumber, typeFilter, tagFilter)),
-        SDK.fetchJSON<PageListResponse>(pageListUrl(props.slug, 1, "", "", 200)),
+        SDK.fetchJSON<PageFacetsResponse>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/pages/facets`),
         SDK.fetchJSON<ActivityResponse>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/log?page_size=5`),
         SDK.fetchJSON<HealthReport>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/health`),
       ])
-        .then(([wikiRow, pageRows, allRows, logRows, healthRows]) => {
+        .then(([wikiRow, pageRows, facetRows, logRows, healthRows]) => {
           setSummary(wikiRow);
           setPages(pageRows);
-          setAllPages(allRows.items || []);
+          setFacets(facetRows);
           setActivity(logRows.items || []);
           setHealth(healthRows);
         })
@@ -426,11 +438,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
       load();
     }, [load]);
 
-    const typeOptions = useMemo(() => sortedUnique(allPages.map((page) => page.type || "").filter(Boolean)), [allPages]);
-    const tagOptions = useMemo(
-      () => sortedUnique(allPages.flatMap((page) => page.tags || []).filter(Boolean)),
-      [allPages],
-    );
+    const typeOptions = useMemo(() => sortedUnique(facets?.types || []), [facets]);
+    const tagOptions = useMemo(() => sortedUnique(facets?.tags || []), [facets]);
 
     if (loading) return h(LoadingState, { label: "Loading Wiki…" });
     if (error) {
@@ -811,7 +820,7 @@ if (SDK && window.__HERMES_PLUGINS__) {
   function ActivityRoute(props: { slug: string }) {
     const [summary, setSummary] = useState<WikiSummary | null>(null);
     const [entries, setEntries] = useState<ActivityEntry[]>([]);
-    const [allEntries, setAllEntries] = useState<ActivityEntry[]>([]);
+    const [facets, setFacets] = useState<ActivityFacetsResponse | null>(null);
     const [pagination, setPagination] = useState<Pagination | null>(null);
     const [authorFilter, setAuthorFilter] = useState<string>("");
     const [kindFilter, setKindFilter] = useState<string>("");
@@ -825,13 +834,13 @@ if (SDK && window.__HERMES_PLUGINS__) {
       Promise.all([
         SDK.fetchJSON<WikiSummary>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
         SDK.fetchJSON<ActivityResponse>(activityUrl(props.slug, pageNumber, authorFilter, kindFilter, 5)),
-        SDK.fetchJSON<ActivityResponse>(activityUrl(props.slug, 1, "", "", 200)),
+        SDK.fetchJSON<ActivityFacetsResponse>(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/log/facets`),
       ])
-        .then(([wikiRow, logRows, allRows]) => {
+        .then(([wikiRow, logRows, facetRows]) => {
           setSummary(wikiRow);
           setEntries(Array.isArray(logRows.items) ? logRows.items : []);
           setPagination(logRows.pagination);
-          setAllEntries(Array.isArray(allRows.items) ? allRows.items : []);
+          setFacets(facetRows);
         })
         .catch((err) => setError(messageOf(err)))
         .finally(() => setLoading(false));
@@ -841,14 +850,8 @@ if (SDK && window.__HERMES_PLUGINS__) {
       load();
     }, [load]);
 
-    const authorOptions = useMemo(
-      () => sortedUnique(allEntries.map((entry) => entry.author || "").filter(Boolean)),
-      [allEntries],
-    );
-    const kindOptions = useMemo(
-      () => sortedUnique(allEntries.map((entry) => entry.author_kind || "").filter(Boolean)),
-      [allEntries],
-    );
+    const authorOptions = useMemo(() => sortedUnique(facets?.authors || []), [facets]);
+    const kindOptions = useMemo(() => sortedUnique(facets?.kinds || []), [facets]);
 
     if (loading) return h(LoadingState, { label: "Loading Activity…" });
     if (error) {

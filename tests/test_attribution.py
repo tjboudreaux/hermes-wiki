@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conftest import grant_env_from_argv
 
 from hermes_wiki import db, projection
 from hermes_wiki.frontmatter import read_markdown
@@ -16,7 +17,7 @@ from hermes_wiki_cli.cli import main
 
 
 def _run_cli(home: Path, *argv: str, env: dict[str, str] | None = None) -> int:
-    inferred = _grant_env_from_argv(argv) if env is None or "HERMES_WIKI" not in env else {}
+    inferred = grant_env_from_argv(argv) if env is None or "HERMES_WIKI" not in env else {}
     merged = {"HERMES_HOME": str(home), "USER": "cli-user", **inferred, **(env or {})}
     old = os.environ.copy()
     try:
@@ -26,16 +27,6 @@ def _run_cli(home: Path, *argv: str, env: dict[str, str] | None = None) -> int:
     finally:
         os.environ.clear()
         os.environ.update(old)
-
-
-def _grant_env_from_argv(argv: tuple[str, ...]) -> dict[str, str]:
-    if "--wiki" not in argv:
-        return {}
-    index = argv.index("--wiki")
-    if index + 1 >= len(argv):
-        return {}
-    return {"HERMES_WIKI": argv[index + 1]}
-
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(

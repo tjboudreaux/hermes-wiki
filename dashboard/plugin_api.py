@@ -144,6 +144,23 @@ def list_pages(
     }
 
 
+@router.get("/wikis/{slug}/pages/facets")
+def get_page_facets(slug: str) -> dict[str, Any]:
+    """Return lightweight unique page filter values without page row payloads."""
+
+    _slug, wiki_root = _require_visible(slug)
+    from hermes_wiki.lint import ensure_projection_current
+
+    ensure_projection_current(wiki_root)
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
+        facets = db.page_facets(conn)
+    return {
+        "wiki": slug,
+        "types": facets["types"],
+        "tags": facets["tags"],
+    }
+
+
 @router.get("/wikis/{slug}/pages/{page_id:path}")
 def get_page(slug: str, page_id: str) -> dict[str, Any]:
     """Return full page content plus metadata panels."""
@@ -157,6 +174,7 @@ def get_page(slug: str, page_id: str) -> dict[str, Any]:
         row = db.get_page(conn, clean_page_id)
         projected_refs = db.list_kanban_refs(conn, page_id=clean_page_id)
         all_pages = db.list_pages(conn, include_archived=False)
+        inbound_pages = db.list_inbound_page_links(conn, target_page_id=clean_page_id)
     if row is None or int(row.get("archived") or 0):
         raise _not_found("page not found")
     page_path = _page_path(wiki_root, clean_page_id)
@@ -182,7 +200,7 @@ def get_page(slug: str, page_id: str) -> dict[str, Any]:
         "inbound_links": int(row.get("inbound_links") or 0),
         "outbound_links": outbound,
         "outbound_pages": _linked_page_rows(all_pages, outbound),
-        "inbound_pages": _inbound_page_rows(wiki_root, all_pages, clean_page_id),
+        "inbound_pages": _inbound_page_rows(inbound_pages),
         "kanban_refs": _kanban_refs(clean_page_id, frontmatter, projected_refs),
         "history": history,
         "path": page_path.relative_to(wiki_root).as_posix(),
@@ -330,6 +348,21 @@ def get_log(
             "has_previous": safe_page > 1,
         },
         "filters": {"author": author, "kind": kind},
+    }
+
+
+@router.get("/wikis/{slug}/log/facets")
+def get_log_facets(slug: str) -> dict[str, Any]:
+    """Return lightweight unique activity filter values without log row payloads."""
+
+    _slug, wiki_root = _require_visible(slug)
+    entries = list_log_entries(wiki_root)
+    authors = sorted({entry.author for entry in entries if entry.author})
+    kinds = sorted({entry.author_kind for entry in entries if entry.author_kind})
+    return {
+        "wiki": slug,
+        "authors": authors,
+        "kinds": kinds,
     }
 
 
@@ -645,31 +678,12 @@ def _linked_page_rows(
     return rows
 
 
-def _inbound_page_rows(
-    wiki_root: Path,
-    all_pages: Sequence[Mapping[str, Any]],
-    target_page_id: str,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for row in all_pages:
-        candidate_id = str(row.get("id") or "")
-        if not candidate_id or candidate_id == target_page_id:
-            continue
-        candidate_path = _page_path(wiki_root, candidate_id)
-        if candidate_path is None or not candidate_path.is_file():
-            continue
-        try:
-            candidate_frontmatter, _body = read_markdown(candidate_path)
-        except (OSError, FrontmatterError):
-            continue
-        links = {
-            str(item).strip().removesuffix(".md")
-            for item in _as_sequence(candidate_frontmatter.get("links"))
-        }
-        if target_page_id in links:
-            rows.append(_page_reference_row(candidate_id, row))
-    rows.sort(key=lambda item: item["id"])
-    return rows
+def _inbound_page_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        _page_reference_row(str(row.get("id") or ""), row)
+        for row in rows
+        if str(row.get("id") or "")
+    ]
 
 
 def _page_reference_row(page_id: str, row: Mapping[str, Any] | None) -> dict[str, Any]:

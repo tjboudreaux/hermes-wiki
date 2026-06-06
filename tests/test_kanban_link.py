@@ -7,13 +7,15 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+from conftest import grant_env_from_argv
+
 from hermes_wiki import db, projection
 from hermes_wiki.frontmatter import read_markdown
 from hermes_wiki_cli.cli import main
 
 
 def _run_cli(home: Path, *argv: str) -> tuple[int, str, str]:
-    merged = {"HERMES_HOME": str(home), "USER": "kanban-tester", **_grant_env_from_argv(argv)}
+    merged = {"HERMES_HOME": str(home), "USER": "kanban-tester", **grant_env_from_argv(argv)}
     old = os.environ.copy()
     try:
         os.environ.clear()
@@ -30,16 +32,6 @@ def _run_cli(home: Path, *argv: str) -> tuple[int, str, str]:
     finally:
         os.environ.clear()
         os.environ.update(old)
-
-
-def _grant_env_from_argv(argv: tuple[str, ...]) -> dict[str, str]:
-    if "--wiki" not in argv:
-        return {}
-    index = argv.index("--wiki")
-    if index + 1 >= len(argv):
-        return {}
-    return {"HERMES_WIKI": argv[index + 1]}
-
 
 def _write_tasks(home: Path, tasks: dict[str, dict[str, Any]]) -> None:
     (home / "kanban_tasks.json").write_text(json.dumps(tasks, sort_keys=True), encoding="utf-8")

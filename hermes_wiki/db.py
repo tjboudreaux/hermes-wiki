@@ -185,6 +185,12 @@ def initialize_wiki(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (page_id, task_id, direction)
         );
 
+        CREATE TABLE IF NOT EXISTS page_links (
+            source_page_id TEXT NOT NULL,
+            target_page_id TEXT NOT NULL,
+            PRIMARY KEY (source_page_id, target_page_id)
+        );
+
         CREATE TABLE IF NOT EXISTS projection_versions (
             version_id TEXT PRIMARY KEY,
             created TEXT NOT NULL,
@@ -205,6 +211,7 @@ def initialize_wiki(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_ingest_log_ingested_at ON ingest_log(ingested_at);
         CREATE INDEX IF NOT EXISTS idx_sources_latest ON sources(source_url, is_latest);
         CREATE INDEX IF NOT EXISTS idx_kanban_refs_task_id ON kanban_refs(task_id);
+        CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target_page_id);
 
         CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
             INSERT INTO pages_fts(rowid, id, title, tags, snippet, search_text)
@@ -529,6 +536,82 @@ def delete_page(conn: sqlite3.Connection, page_id: str) -> None:
     """Delete a projected Wiki Page row and its FTS entry via trigger."""
 
     conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+
+
+def replace_page_links(
+    conn: sqlite3.Connection,
+    *,
+    source_page_id: str,
+    target_page_ids: Sequence[str],
+) -> None:
+    """Replace one source page's projected outgoing page-link index rows."""
+
+    conn.execute("DELETE FROM page_links WHERE source_page_id = ?", (source_page_id,))
+    seen: set[str] = set()
+    for target_page_id in target_page_ids:
+        clean_target = str(target_page_id).strip().removesuffix(".md")
+        if not clean_target or clean_target in seen or clean_target == source_page_id:
+            continue
+        seen.add(clean_target)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO page_links (source_page_id, target_page_id)
+            VALUES (?, ?)
+            """,
+            (source_page_id, clean_target),
+        )
+
+
+def list_inbound_page_links(
+    conn: sqlite3.Connection,
+    *,
+    target_page_id: str,
+    include_archived: bool = False,
+) -> list[RowDict]:
+    """Return projected page rows that link to ``target_page_id``."""
+
+    archived_clause = "" if include_archived else "AND pages.archived = 0"
+    return _rows(
+        conn.execute(
+            f"""
+            SELECT pages.*
+            FROM page_links
+            JOIN pages ON pages.id = page_links.source_page_id
+            WHERE page_links.target_page_id = ? {archived_clause}
+            ORDER BY pages.id
+            """,
+            (target_page_id,),
+        ),
+        json_fields={"tags", "sources"},
+    )
+
+
+def page_facets(conn: sqlite3.Connection, *, include_archived: bool = False) -> RowDict:
+    """Return unique page filter values from projected columns without row payloads."""
+
+    archived_clause = "" if include_archived else "WHERE archived = 0"
+    types = [
+        str(row["type"])
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT type
+            FROM pages
+            {archived_clause}
+            ORDER BY type
+            """
+        )
+        if row["type"]
+    ]
+    tag_rows = conn.execute(f"SELECT tags FROM pages {archived_clause}").fetchall()
+    tags = sorted(
+        {
+            str(tag)
+            for row in tag_rows
+            for tag in (_json_load(row["tags"]) or [])
+            if str(tag).strip()
+        }
+    )
+    return {"types": types, "tags": tags}
 
 
 def search_pages(
@@ -871,6 +954,7 @@ __all__ = [
     "initialize_registry",
     "initialize_wiki",
     "insert_ingest_log",
+    "list_inbound_page_links",
     "list_ingest_log",
     "list_kanban_refs",
     "list_pages",
@@ -880,8 +964,10 @@ __all__ = [
     "list_wikis",
     "mark_source_not_latest",
     "normalize_search_text",
+    "page_facets",
     "rebuild_pages_fts",
     "registry_tables",
+    "replace_page_links",
     "search_pages",
     "unarchive_wiki",
     "update_wiki_counts",

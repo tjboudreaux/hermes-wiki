@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -238,6 +238,7 @@ def projection_db_sha256(path: Path | str) -> str:
     digest = hashlib.sha256()
     tables = (
         "pages",
+        "page_links",
         "ingest_log",
         "sources",
         "taxonomy",
@@ -256,9 +257,13 @@ def projection_db_sha256(path: Path | str) -> str:
             digest.update(b"\0")
             digest.update(json.dumps(selected_columns, separators=(",", ":")).encode("utf-8"))
             digest.update(b"\0")
-            order_by = selected_columns[0] if selected_columns else "rowid"
+            order_by = (
+                ", ".join(f'"{column}"' for column in selected_columns)
+                if selected_columns
+                else "rowid"
+            )
             quoted = ", ".join(f'"{column}"' for column in selected_columns)
-            for row in conn.execute(f'SELECT {quoted} FROM "{table}" ORDER BY "{order_by}"'):
+            for row in conn.execute(f'SELECT {quoted} FROM "{table}" ORDER BY {order_by}'):
                 digest.update(
                     json.dumps(
                         [row[column] for column in selected_columns],
@@ -301,8 +306,12 @@ def _build_tmp_projection(
         _copy_support_tables(conn, wiki_root / "wiki.db")
         _project_trusted_plugins_from_schema(conn, wiki_root)
         for page_file in _iter_page_files(wiki_root):
-            page = _page_projection_from_file(wiki_root, page_file)
-            expected_pages.append(page)
+            expected_pages.append(_page_projection_from_file(wiki_root, page_file))
+        inbound_counts = _page_inbound_counts(expected_pages)
+        expected_pages = [
+            replace(page, inbound_links=inbound_counts.get(page.id, 0)) for page in expected_pages
+        ]
+        for page in expected_pages:
             db.upsert_page(
                 conn,
                 id=page.id,
@@ -323,6 +332,7 @@ def _build_tmp_projection(
                 body_text=page.body_text,
             )
             _project_kanban_refs_from_page(conn, page)
+            _project_page_links_from_page(conn, page)
         _project_sources_from_pages(conn, wiki_root, expected_pages)
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -402,6 +412,30 @@ def _project_kanban_refs_from_page(
         )
 
 
+def _project_page_links_from_page(
+    target: sqlite3.Connection,
+    page: _PageProjection,
+) -> None:
+    db.replace_page_links(
+        target,
+        source_page_id=page.id,
+        target_page_ids=_frontmatter_links(page.metadata.get("links")),
+    )
+
+
+def _page_inbound_counts(pages: list[_PageProjection]) -> dict[str, int]:
+    page_ids = {page.id for page in pages}
+    counts = {page_id: 0 for page_id in page_ids}
+    for page in pages:
+        seen_targets: set[str] = set()
+        for target_id in _frontmatter_links(page.metadata.get("links")):
+            if target_id not in page_ids or target_id == page.id or target_id in seen_targets:
+                continue
+            seen_targets.add(target_id)
+            counts[target_id] += 1
+    return counts
+
+
 def _project_sources_from_pages(
     target: sqlite3.Connection,
     wiki_root: Path,
@@ -475,6 +509,24 @@ def _frontmatter_kanban_refs(value: Any) -> list[dict[str, Any]]:
         seen.add(key)
         refs.append(dict(item))
     return refs
+
+
+def _frontmatter_links(value: Any) -> list[str]:
+    if isinstance(value, str):
+        values: Iterable[Any] = [value]
+    elif isinstance(value, Iterable):
+        values = value
+    else:
+        return []
+    links: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        clean = str(item).strip().removesuffix(".md")
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        links.append(clean)
+    return links
 
 
 def _validate_tmp_projection(tmp_db_path: Path, expected_pages: list[_PageProjection]) -> None:

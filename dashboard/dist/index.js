@@ -153,7 +153,7 @@
     }, WikiRoute = function(props) {
       const [summary, setSummary] = useState(null);
       const [pages, setPages] = useState(null);
-      const [allPages, setAllPages] = useState([]);
+      const [facets, setFacets] = useState(null);
       const [activity, setActivity] = useState([]);
       const [health, setHealth] = useState(null);
       const [loading, setLoading] = useState(true);
@@ -167,13 +167,13 @@
         Promise.all([
           SDK.fetchJSON(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
           SDK.fetchJSON(pageListUrl(props.slug, pageNumber, typeFilter, tagFilter)),
-          SDK.fetchJSON(pageListUrl(props.slug, 1, "", "", 200)),
+          SDK.fetchJSON(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/pages/facets`),
           SDK.fetchJSON(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/log?page_size=5`),
           SDK.fetchJSON(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/health`)
-        ]).then(([wikiRow, pageRows, allRows, logRows, healthRows]) => {
+        ]).then(([wikiRow, pageRows, facetRows, logRows, healthRows]) => {
           setSummary(wikiRow);
           setPages(pageRows);
-          setAllPages(allRows.items || []);
+          setFacets(facetRows);
           setActivity(logRows.items || []);
           setHealth(healthRows);
         }).catch((err) => setError(messageOf(err))).finally(() => setLoading(false));
@@ -181,11 +181,8 @@
       useEffect(() => {
         load();
       }, [load]);
-      const typeOptions = useMemo(() => sortedUnique(allPages.map((page) => page.type || "").filter(Boolean)), [allPages]);
-      const tagOptions = useMemo(
-        () => sortedUnique(allPages.flatMap((page) => page.tags || []).filter(Boolean)),
-        [allPages]
-      );
+      const typeOptions = useMemo(() => sortedUnique(facets?.types || []), [facets]);
+      const tagOptions = useMemo(() => sortedUnique(facets?.tags || []), [facets]);
       if (loading) return h(LoadingState, { label: "Loading Wiki\u2026" });
       if (error) {
         if (isNotFound(error)) return h(ErrorState, { title: "Wiki not found", message: "This Wiki was not found or is not visible." });
@@ -517,7 +514,7 @@
     }, ActivityRoute = function(props) {
       const [summary, setSummary] = useState(null);
       const [entries, setEntries] = useState([]);
-      const [allEntries, setAllEntries] = useState([]);
+      const [facets, setFacets] = useState(null);
       const [pagination, setPagination] = useState(null);
       const [authorFilter, setAuthorFilter] = useState("");
       const [kindFilter, setKindFilter] = useState("");
@@ -530,25 +527,19 @@
         Promise.all([
           SDK.fetchJSON(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}`),
           SDK.fetchJSON(activityUrl(props.slug, pageNumber, authorFilter, kindFilter, 5)),
-          SDK.fetchJSON(activityUrl(props.slug, 1, "", "", 200))
-        ]).then(([wikiRow, logRows, allRows]) => {
+          SDK.fetchJSON(`/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/log/facets`)
+        ]).then(([wikiRow, logRows, facetRows]) => {
           setSummary(wikiRow);
           setEntries(Array.isArray(logRows.items) ? logRows.items : []);
           setPagination(logRows.pagination);
-          setAllEntries(Array.isArray(allRows.items) ? allRows.items : []);
+          setFacets(facetRows);
         }).catch((err) => setError(messageOf(err))).finally(() => setLoading(false));
       }, [props.slug, pageNumber, authorFilter, kindFilter]);
       useEffect(() => {
         load();
       }, [load]);
-      const authorOptions = useMemo(
-        () => sortedUnique(allEntries.map((entry) => entry.author || "").filter(Boolean)),
-        [allEntries]
-      );
-      const kindOptions = useMemo(
-        () => sortedUnique(allEntries.map((entry) => entry.author_kind || "").filter(Boolean)),
-        [allEntries]
-      );
+      const authorOptions = useMemo(() => sortedUnique(facets?.authors || []), [facets]);
+      const kindOptions = useMemo(() => sortedUnique(facets?.kinds || []), [facets]);
       if (loading) return h(LoadingState, { label: "Loading Activity\u2026" });
       if (error) {
         if (isNotFound(error)) {

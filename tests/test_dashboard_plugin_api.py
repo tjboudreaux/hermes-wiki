@@ -126,6 +126,45 @@ def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
     assert all(item["author_kind"] == "agent" for item in log["items"])
 
 
+def test_filter_facets_return_unique_values_without_row_payload(plugin_api: Any) -> None:
+    page_facets = plugin_api.get_page_facets("ai-tooling")
+
+    assert page_facets["wiki"] == "ai-tooling"
+    assert "concept" in page_facets["types"]
+    assert "memory" in page_facets["tags"]
+    assert "items" not in page_facets
+    assert "pagination" not in page_facets
+
+    log_facets = plugin_api.get_log_facets("ai-tooling")
+
+    assert log_facets["wiki"] == "ai-tooling"
+    assert "agent" in log_facets["kinds"]
+    assert log_facets["authors"]
+    assert "items" not in log_facets
+    assert "pagination" not in log_facets
+
+
+def test_page_inbound_pages_use_projection_without_scanning_page_files(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_read_markdown = plugin_api.read_markdown
+
+    def read_only_requested_page(path: Path) -> tuple[dict[str, Any], str]:
+        if path.as_posix().endswith("concepts/agent-memory.md"):
+            return real_read_markdown(path)
+        raise AssertionError(f"unexpected inbound candidate file read: {path}")
+
+    monkeypatch.setattr(plugin_api, "read_markdown", read_only_requested_page)
+
+    page = plugin_api.get_page("ai-tooling", "concepts/agent-memory")
+
+    assert any(
+        link["id"] == "sources/2026-06-05-agent-memory-article"
+        for link in page["inbound_pages"]
+    )
+
+
 def test_health_report_exposes_all_severities_for_dashboard_filters(plugin_api: Any) -> None:
     health = plugin_api.get_health("ai-tooling")
 

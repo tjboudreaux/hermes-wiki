@@ -67,6 +67,7 @@ def test_wiki_schema_matches_spec_tables_and_columns(tmp_path: Path) -> None:
         assert db.wiki_tables(conn) == [
             "ingest_log",
             "kanban_refs",
+            "page_links",
             "pages",
             "pages_fts",
             "pages_fts_config",
@@ -106,6 +107,10 @@ def test_wiki_schema_matches_spec_tables_and_columns(tmp_path: Path) -> None:
             "snippet",
             "search_text",
         ]
+        assert _table_columns(conn, "page_links") == [
+            "source_page_id",
+            "target_page_id",
+        ]
         assert _table_columns(conn, "sources") == [
             "id",
             "ingested_at",
@@ -133,6 +138,40 @@ def test_wiki_schema_matches_spec_tables_and_columns(tmp_path: Path) -> None:
             )
         }
         assert triggers == {"pages_ai", "pages_ad", "pages_au"}
+
+
+def test_page_link_projection_helpers_track_inbound_refs(tmp_path: Path) -> None:
+    """The projection has a lightweight page-link index for inbound page lookups."""
+
+    with db.connect_wiki(tmp_path / "wiki.db") as conn:
+        db.initialize_wiki(conn)
+        db.upsert_page(
+            conn,
+            id="sources/article",
+            title="Article",
+            type="source",
+            created="2026-06-05T00:00:00Z",
+            updated="2026-06-05T00:00:00Z",
+            body_text="Article body",
+        )
+        db.upsert_page(
+            conn,
+            id="concepts/agent-memory",
+            title="Agent Memory",
+            type="concept",
+            created="2026-06-05T00:00:00Z",
+            updated="2026-06-05T00:00:00Z",
+            body_text="Concept body",
+        )
+        db.replace_page_links(
+            conn,
+            source_page_id="sources/article",
+            target_page_ids=["concepts/agent-memory", "concepts/agent-memory.md"],
+        )
+
+        inbound = db.list_inbound_page_links(conn, target_page_id="concepts/agent-memory")
+
+        assert [row["id"] for row in inbound] == ["sources/article"]
 
 
 def test_page_crud_keeps_fts_in_sync_and_returns_bm25_ranked_results(tmp_path: Path) -> None:

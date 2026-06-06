@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conftest import grant_env_from_argv
 
 from fixtures.seed_data import SAMPLE_SOURCE_KINDS, sample_source_path
 from hermes_wiki import pipeline
@@ -17,7 +18,7 @@ from hermes_wiki_cli.cli import main
 
 
 def _run_cli(tmp_path: Path, *argv: str, env: dict[str, str] | None = None) -> int:
-    inferred = _grant_env_from_argv(argv) if env is None or "HERMES_WIKI" not in env else {}
+    inferred = grant_env_from_argv(argv) if env is None or "HERMES_WIKI" not in env else {}
     merged = {"HERMES_HOME": str(tmp_path), "USER": "ingest-tester", **inferred, **(env or {})}
     old = os.environ.copy()
     try:
@@ -27,16 +28,6 @@ def _run_cli(tmp_path: Path, *argv: str, env: dict[str, str] | None = None) -> i
     finally:
         os.environ.clear()
         os.environ.update(old)
-
-
-def _grant_env_from_argv(argv: tuple[str, ...]) -> dict[str, str]:
-    if "--wiki" not in argv:
-        return {}
-    index = argv.index("--wiki")
-    if index + 1 >= len(argv):
-        return {}
-    return {"HERMES_WIKI": argv[index + 1]}
-
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -617,7 +608,18 @@ def test_ingest_cross_links_existing_page_and_increments_inbound_links(tmp_path:
         after = conn.execute(
             "SELECT inbound_links FROM pages WHERE id='concepts/agent-memory'"
         ).fetchone()[0]
+        inbound_source_ids = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT source_page_id
+                FROM page_links
+                WHERE target_page_id = 'concepts/agent-memory'
+                """
+            )
+        }
     assert after > before
+    assert any(source_id.startswith("sources/") for source_id in inbound_source_ids)
     assert "../concepts/agent-memory.md" in _latest_source_page(wiki_root).read_text(
         encoding="utf-8"
     )
