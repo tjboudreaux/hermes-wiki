@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from adapters.standalone import StandaloneHomeResolver, StandaloneKanbanReader
 from fixtures.factory import OVERSIZED_SAMPLE_BYTES, build_clean_home, build_test_wiki
 from fixtures.seed_data import (
     PAGE_TYPE_DIRECTORIES,
@@ -106,6 +107,11 @@ def test_factory_populates_pages_sources_inbox_links_history_and_kanban(tmp_path
             "created": "2026-06-05T09:30:00Z",
         }
     ]
+    kanban_reader = StandaloneKanbanReader(home=StandaloneHomeResolver(home_path=fixture.home))
+    linked_task = kanban_reader.get_task("KB-123")
+    assert linked_task is not None
+    assert linked_task["title"] == "Review agent memory dashboard linkage"
+    assert not (fixture.home / "kanban.db").exists()
     assert search_results[0]["id"] == "concepts/agent-memory"
 
     agent_memory = (wiki_root / "concepts" / "agent-memory.md").read_text(encoding="utf-8")

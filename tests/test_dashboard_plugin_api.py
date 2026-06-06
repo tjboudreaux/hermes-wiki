@@ -61,12 +61,6 @@ def test_wiki_subroutes_deny_invisible_and_archived_without_disclosure(plugin_ap
 
 
 def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
-    home = Path(plugin_api.get_wiki("ai-tooling")["path"]).parents[1]
-    (home / "kanban_tasks.json").write_text(
-        json.dumps({"KB-123": {"id": "KB-123", "title": "Preserved task"}}),
-        encoding="utf-8",
-    )
-
     pages = plugin_api.list_pages("ai-tooling", page_type="concept", tag="memory")
     assert pages["pagination"]["total"] >= 1
     assert all(item["type"] == "concept" for item in pages["items"])
@@ -85,7 +79,8 @@ def test_pages_page_search_inbox_health_and_log_shapes(plugin_api: Any) -> None:
     )
     assert isinstance(page["kanban_refs"], list)
     assert any(
-        ref["task_id"] == "KB-123" and ref["task_title"] == "Preserved task"
+        ref["task_id"] == "KB-123"
+        and ref["task_title"] == "Review agent memory dashboard linkage"
         for ref in page["kanban_refs"]
     )
     assert isinstance(page["history"], list)

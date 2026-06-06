@@ -25,6 +25,17 @@ PRIMARY_WIKI_DOMAIN = "AI agents, coding tools, and research workflows"
 ARCHIVED_WIKI_DOMAIN = "Archived game economy research"
 PRIVATE_WIKI_DOMAIN = "Private model-evaluation lab notes"
 
+SEEDED_KANBAN_PAGE_ID = "concepts/agent-memory"
+SEEDED_KANBAN_TASK_ID = "KB-123"
+SEEDED_KANBAN_TASK_TITLE = "Review agent memory dashboard linkage"
+SEEDED_KANBAN_TASKS = {
+    SEEDED_KANBAN_TASK_ID: {
+        "id": SEEDED_KANBAN_TASK_ID,
+        "title": SEEDED_KANBAN_TASK_TITLE,
+        "status": "todo",
+    }
+}
+
 SOURCES_DIR = Path(__file__).resolve().parent / "sources"
 SAMPLE_SOURCE_FILES = {
     "article": "agent-memory-article.md",
@@ -196,7 +207,7 @@ PRIMARY_PAGES = (
         ),
         kanban_refs=(
             KanbanRefSeed(
-                task_id="KB-123",
+                task_id=SEEDED_KANBAN_TASK_ID,
                 direction="page->task",
                 created=FIXED_NOW,
             ),
@@ -582,6 +593,10 @@ __all__ = [
     "RAW_SOURCE_DESTINATIONS",
     "SAMPLE_SOURCE_FILES",
     "SAMPLE_SOURCE_KINDS",
+    "SEEDED_KANBAN_PAGE_ID",
+    "SEEDED_KANBAN_TASKS",
+    "SEEDED_KANBAN_TASK_ID",
+    "SEEDED_KANBAN_TASK_TITLE",
     "SOURCES_DIR",
     "TAXONOMY_TAGS",
     "KanbanRefSeed",

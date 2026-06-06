@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +80,7 @@ def build_populated_home(home: Path | str, *, clean: bool = False) -> TestWikiFi
         seed_data.PRIMARY_WIKI_SLUG + "\n",
         encoding="utf-8",
     )
+    _write_readonly_kanban_fixture(target_home)
 
     registry_db = wikis_dir / "wikis.db"
     with db.connect_registry(registry_db) as conn:
@@ -300,6 +302,15 @@ def _copy_classified_raw_sources(wiki_root: Path) -> None:
         target = wiki_root / destination
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(seed_data.sample_source_path(kind), target)
+
+
+def _write_readonly_kanban_fixture(home: Path) -> None:
+    """Seed read-only standalone kanban task metadata for resolvable page refs."""
+
+    (home / "kanban_tasks.json").write_text(
+        json.dumps(seed_data.SEEDED_KANBAN_TASKS, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_primary_pages(

@@ -124,7 +124,11 @@ def test_wiki_show_returns_body_frontmatter_and_kanban_refs(
             "task_id": "KB-123",
             "direction": "page->task",
             "created": "2026-06-05T09:30:00Z",
-            "task": None,
+            "task": {
+                "id": "KB-123",
+                "status": "todo",
+                "title": "Review agent memory dashboard linkage",
+            },
         }
     ]
 
