@@ -44,6 +44,7 @@ from hermes_wiki.pipeline import (
     write_inbox_file,
 )
 from hermes_wiki.search import search_wiki
+from hermes_wiki.skills import SkillsError, read_wiki_skills, set_wiki_skill
 from hermes_wiki.visibility import (
     WikiVisibilityError,
     has_write_grant,
@@ -80,6 +81,13 @@ class InboxFileUpdateRequest(BaseModel):
     """Payload for replacing one inbox file's content."""
 
     content: str
+
+
+class WikiSkillsUpdateRequest(BaseModel):
+    """Payload for assigning per-wiki skills; omitted kinds are unchanged."""
+
+    ingestion: str | None = None
+    writing: str | None = None
 
 
 @router.get("/wikis")
@@ -364,6 +372,43 @@ def delete_inbox_file_route(slug: str, filename: str) -> dict[str, Any]:
     except IngestError as exc:
         raise _inbox_file_error(exc) from exc
     return _inbox_file_payload(row)
+
+
+@router.get("/wikis/{slug}/skills")
+def get_wiki_skills(slug: str) -> dict[str, Any]:
+    """Return per-wiki skill assignments and the shipped defaults."""
+
+    _require_visible(slug)
+    try:
+        return read_wiki_skills(wiki=slug)
+    except SkillsError as exc:
+        if str(exc) == NOT_FOUND_OR_NOT_VISIBLE:
+            raise _not_visible() from exc
+        raise _bad_request(str(exc)) from exc
+
+
+@router.put("/wikis/{slug}/skills")
+def update_wiki_skills(slug: str, payload: WikiSkillsUpdateRequest) -> dict[str, Any]:
+    """Assign per-wiki skills; only the kinds present in the payload change."""
+
+    _require_write(slug)
+    updates = {
+        kind: value
+        for kind, value in (("ingestion", payload.ingestion), ("writing", payload.writing))
+        if value is not None
+    }
+    if not updates:
+        raise _bad_request("at least one of ingestion or writing is required")
+    result: dict[str, Any] | None = None
+    try:
+        for kind, value in updates.items():
+            result = set_wiki_skill(kind, value, wiki=slug, author_kind="human")
+    except SkillsError as exc:
+        if str(exc) == NOT_FOUND_OR_NOT_VISIBLE:
+            raise _not_visible() from exc
+        raise _bad_request(str(exc)) from exc
+    assert result is not None
+    return result
 
 
 @router.get("/wikis/{slug}/health")

@@ -531,6 +531,92 @@ def test_inbox_file_write_requires_write_grant(
     assert (wiki_root / "raw" / "inbox" / "unknown-sample.dat").read_bytes() == original
 
 
+def test_wiki_skills_get_returns_defaults(plugin_api: Any) -> None:
+    result = plugin_api.get_wiki_skills("ai-tooling")
+
+    assert result["wiki"] == "ai-tooling"
+    assert result["skills"] == {
+        "ingestion": "wiki:wiki-ingestion",
+        "writing": "wiki:wiki-writing",
+    }
+    assert result["defaults"]["ingestion"] == "wiki:wiki-ingestion"
+
+
+def test_wiki_skills_put_round_trips(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+
+    updated = plugin_api.update_wiki_skills(
+        "ai-tooling",
+        plugin_api.WikiSkillsUpdateRequest(ingestion="research-ingest"),
+    )
+
+    assert updated["skills"]["ingestion"] == "research-ingest"
+    assert updated["skills"]["writing"] == "wiki:wiki-writing"
+
+    reread = plugin_api.get_wiki_skills("ai-tooling")
+    assert reread["skills"]["ingestion"] == "research-ingest"
+
+    schema = Path(plugin_api.get_wiki("ai-tooling")["path"]) / "SCHEMA.md"
+    assert "ingestion: research-ingest" in schema.read_text(encoding="utf-8")
+
+
+def test_wiki_skills_put_updates_both_kinds(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+
+    updated = plugin_api.update_wiki_skills(
+        "ai-tooling",
+        plugin_api.WikiSkillsUpdateRequest(ingestion="a-ingest", writing="b-writer"),
+    )
+
+    assert updated["skills"] == {"ingestion": "a-ingest", "writing": "b-writer"}
+
+
+def test_wiki_skills_put_requires_write_grant_and_payload(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HERMES_WIKI", raising=False)
+    with pytest.raises(HTTPException) as denied:
+        plugin_api.update_wiki_skills(
+            "ai-tooling",
+            plugin_api.WikiSkillsUpdateRequest(ingestion="denied-skill"),
+        )
+    assert denied.value.status_code == 403
+
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    with pytest.raises(HTTPException) as empty:
+        plugin_api.update_wiki_skills("ai-tooling", plugin_api.WikiSkillsUpdateRequest())
+    assert empty.value.status_code == 400
+
+    with pytest.raises(HTTPException) as bad_name:
+        plugin_api.update_wiki_skills(
+            "ai-tooling",
+            plugin_api.WikiSkillsUpdateRequest(ingestion="two words"),
+        )
+    assert bad_name.value.status_code == 400
+
+
+def test_wiki_skills_invisible_wiki_hidden(plugin_api: Any) -> None:
+    for slug in ("private-lab", "ungodly-economy"):
+        with pytest.raises(HTTPException) as read_exc:
+            plugin_api.get_wiki_skills(slug)
+        assert read_exc.value.status_code == 404
+        assert read_exc.value.detail == "not found or not visible"
+
+        with pytest.raises(HTTPException) as write_exc:
+            plugin_api.update_wiki_skills(
+                slug,
+                plugin_api.WikiSkillsUpdateRequest(ingestion="x"),
+            )
+        assert write_exc.value.status_code == 404
+
+
 def test_inbox_file_invisible_wiki_hidden(
     plugin_api: Any,
     monkeypatch: pytest.MonkeyPatch,
