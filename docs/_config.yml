@@ -1,0 +1,37 @@
+title: Hermes Wiki
+description: Karpathy-style LLM Wikis for the Hermes Agent — persistent, compounding knowledge bases curated by AI agents
+url: https://hermes-wiki.github.io
+baseurl: /hermes-wiki
+
+remote_theme: pages-themes/cayman@v0.2.0
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# SEO
+twitter:
+  card: summary_large_image
+logo: /assets/hermes-wiki-banner.svg
+social:
+  name: Hermes Wiki
+  links:
+    - https://github.com/hermes-wiki/hermes-wiki
+
+# Navigation
+header_pages:
+  - index.md
+  - getting-started.md
+  - cli-reference.md
+  - agent-tools.md
+  - architecture.md
+  - dashboard.md
+  - karpathy-pattern.md
+
+google_analytics: ""
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor

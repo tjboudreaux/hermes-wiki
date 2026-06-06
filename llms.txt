@@ -1,0 +1,82 @@
+# Hermes Wiki
+
+> Hermes Wiki is a Python package that gives AI agents persistent, compounding knowledge bases. It implements Andrej Karpathy's LLM Wiki pattern for the Hermes Agent: agents ingest raw sources through a pluggable pipeline into structured, interlinked wiki pages — replacing traditional RAG's per-query rediscovery with durable, attributed, git-backed wikis.
+
+Unlike traditional RAG (which retrieves document chunks at query time and forgets between sessions), Hermes Wiki has agents incrementally build and maintain persistent wikis. Markdown files with YAML frontmatter are the source of truth. SQLite FTS5 provides search as a rebuildable projection. Every change is attributed to an agent, profile, human, or cron job and committed to a per-wiki git repository.
+
+## Core Concepts
+
+- **LLM Wiki**: A domain-scoped knowledge base where agents compile, cross-reference, and maintain durable knowledge from human-curated sources. Each wiki contains raw sources, wiki pages, a schema, an index, and a log.
+- **Raw Source**: Immutable source material (articles, papers, transcripts) captured before synthesis. Raw sources are append-only — external changes create new snapshots, never overwrite.
+- **Wiki Page**: Agent-curated knowledge derived from one or more raw sources. Pages are markdown files with YAML frontmatter containing type, tags, sources, confidence, attribution, and cross-references.
+- **Schema**: The domain contract for a wiki (SCHEMA.md) defining its scope, taxonomy, page thresholds, propagation rules, and trusted plugins.
+- **Ingest**: The act of turning a raw source into wiki page updates via a pluggable pipeline: classify → process → propagate (update cross-references and index) → commit to git.
+- **Projection**: A rebuildable SQLite view (wiki.db) derived from authoritative markdown files. If markdown and SQLite disagree, markdown wins and the projection is rebuilt.
+- **Surface**: A way to use a wiki — CLI command, agent tool, slash command, or dashboard view. Surfaces expose wiki behavior but are not the knowledge itself.
+
+## Documentation
+
+- [Getting Started](https://hermes-wiki.github.io/hermes-wiki/getting-started.md): Installation, first wiki, first ingest
+- [CLI Reference](https://hermes-wiki.github.io/hermes-wiki/cli-reference.md): All commands and options
+- [Agent Tools](https://hermes-wiki.github.io/hermes-wiki/agent-tools.md): wiki_search, wiki_show, wiki_ingest, etc.
+- [Architecture](https://hermes-wiki.github.io/hermes-wiki/architecture.md): Storage, pipeline, adapters, privacy model
+- [Dashboard](https://hermes-wiki.github.io/hermes-wiki/dashboard.md): React plugin tab setup and views
+- [Design Specification](https://github.com/hermes-wiki/hermes-wiki/blob/main/SPEC.md): Full product behavior spec
+
+## Key Files
+
+- [SPEC.md](https://github.com/hermes-wiki/hermes-wiki/blob/main/SPEC.md): Complete design specification
+- [CONTEXT.md](https://github.com/hermes-wiki/hermes-wiki/blob/main/CONTEXT.md): Domain glossary and language definitions
+- [pyproject.toml](https://github.com/hermes-wiki/hermes-wiki/blob/main/pyproject.toml): Package configuration
+
+## API Surface
+
+### CLI Commands
+```
+hermes-wiki create <slug> --domain <description>
+hermes-wiki ingest <path|url> --wiki <slug>
+hermes-wiki ingest --inbox --wiki <slug>
+hermes-wiki search <query> --wiki <slug> --limit N
+hermes-wiki open <page-id> --wiki <slug>
+hermes-wiki create-page <title> --body <text> --type <type> --tag <tag>
+hermes-wiki list-pages --wiki <slug> --type <type> --tag <tag>
+hermes-wiki lint --wiki <slug>
+hermes-wiki link <page-id> <task-id> --wiki <slug>
+hermes-wiki log --wiki <slug> --author <name> --kind <agent|profile|human|cron>
+hermes-wiki plugins list|trust|untrust --wiki <slug>
+hermes-wiki monitor --wiki <slug> --source <arxiv|rss|x>
+```
+
+### Agent Tools (Python)
+```python
+# Read tools (available to all visible wikis)
+wiki_list(wiki=None)              # List visible wikis or pages
+wiki_search(query, wiki=None, limit=5)  # FTS5 BM25 search
+wiki_show(page_id, wiki=None)     # Full page + frontmatter + kanban refs
+wiki_health_check(wiki=None)      # Lint report (JSON)
+wiki_inbox(wiki=None)             # Unprocessed inbox files
+
+# Write tools (require write grant)
+wiki_ingest(path_or_url=None, wiki=None, classifier=None, inbox=False)
+wiki_create_page(title, body, type, tags, sources, wiki=None)
+wiki_link_kanban(page_id, task_id, wiki=None)
+```
+
+### Dashboard API
+```
+GET  /api/plugins/wiki/wikis
+GET  /api/plugins/wiki/wikis/<slug>
+GET  /api/plugins/wiki/wikis/<slug>/pages
+GET  /api/plugins/wiki/wikis/<slug>/pages/<page_id>
+GET  /api/plugins/wiki/wikis/<slug>/search?q=<query>
+POST /api/plugins/wiki/wikis/<slug>/ingest
+GET  /api/plugins/wiki/wikis/<slug>/inbox
+GET  /api/plugins/wiki/wikis/<slug>/health
+GET  /api/plugins/wiki/wikis/<slug>/log
+```
+
+## Optional
+
+- [Contributing Guide](https://github.com/hermes-wiki/hermes-wiki/blob/main/CONTRIBUTING.md): Development setup and PR process
+- [Karpathy's LLM Wiki Gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): Original concept
+- [Dashboard README](https://github.com/hermes-wiki/hermes-wiki/blob/main/dashboard/README.md): Plugin build and verification

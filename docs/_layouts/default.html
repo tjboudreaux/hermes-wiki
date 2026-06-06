@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>{{ page.title }} | {{ site.title }}</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ page.url | absolute_url }}">
+  <meta property="og:title" content="{{ page.title }} | {{ site.title }}">
+  <meta property="og:description" content="{{ page.description | default: site.description }}">
+  <meta property="og:image" content="{{ '/assets/og-image.png' | absolute_url }}">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page.title }} | {{ site.title }}">
+  <meta name="twitter:description" content="{{ page.description | default: site.description }}">
+  <meta name="twitter:image" content="{{ '/assets/og-image.png' | absolute_url }}">
+
+  <!-- Canonical -->
+  <link rel="canonical" href="{{ page.url | absolute_url }}">
+
+  <!-- JSON-LD -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "Hermes Wiki",
+    "description": "{{ site.description }}",
+    "url": "{{ site.url }}{{ site.baseurl }}",
+    "codeRepository": "https://github.com/hermes-wiki/hermes-wiki",
+    "programmingLanguage": ["Python", "TypeScript"],
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Cross-platform",
+    "author": {
+      "@type": "Organization",
+      "name": "Hermes Wiki contributors"
+    },
+    "license": "https://opensource.org/licenses/MIT"
+  }
+  </script>
+
+  {% seo %}
+
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | absolute_url }}">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1><a href="{{ '/' | absolute_url }}">{{ site.title }}</a></h1>
+      <p>{{ site.description }}</p>
+      <nav>
+        <a href="{{ '/' | absolute_url }}">Home</a>
+        <a href="{{ '/getting-started' | absolute_url }}">Getting Started</a>
+        <a href="{{ '/cli-reference' | absolute_url }}">CLI</a>
+        <a href="{{ '/agent-tools' | absolute_url }}">Agent Tools</a>
+        <a href="{{ '/architecture' | absolute_url }}">Architecture</a>
+        <a href="{{ '/dashboard' | absolute_url }}">Dashboard</a>
+        <a href="https://github.com/hermes-wiki/hermes-wiki">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {{ content }}
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>
+        Implements <a href="https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f">Karpathy's LLM Wiki pattern</a>
+        for the <a href="https://github.com/nous-research/hermes">Hermes Agent</a>.
+        <a href="https://github.com/hermes-wiki/hermes-wiki">View on GitHub</a>.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

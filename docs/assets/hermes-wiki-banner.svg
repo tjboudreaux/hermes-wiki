@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 120" fill="none">
+  <rect width="600" height="120" rx="8" fill="#1a1a2e"/>
+  <text x="300" y="55" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="36" font-weight="700" fill="#e0e0e0">Hermes Wiki</text>
+  <text x="300" y="85" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#8888aa">Karpathy-style LLM Wikis for the Hermes Agent</text>
+  <circle cx="80" cy="60" r="25" fill="none" stroke="#6366f1" stroke-width="2"/>
+  <path d="M68 60 L80 48 L92 60 L80 72 Z" fill="#6366f1" opacity="0.3"/>
+  <path d="M74 60 L80 54 L86 60 L80 66 Z" fill="#6366f1"/>
+</svg>
