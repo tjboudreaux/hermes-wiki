@@ -23,6 +23,7 @@ dev = [
   "pytest>=9.0.3",
   "ruff>=0.15.16",
   "ty==0.0.44",
+  "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@main",
 ]
 
 [tool.hatch.build.targets.wheel]

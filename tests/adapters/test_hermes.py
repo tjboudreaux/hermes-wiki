@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-
-import pytest
 
 from adapters.base import MonitorJob
 from adapters.hermes import (
@@ -21,8 +18,6 @@ from adapters.hermes import (
     HermesToolRegistry,
     create_adapters,
 )
-
-_has_hermes_cli = importlib.util.find_spec("hermes_cli") is not None
 
 
 class _FakeCronModule:
@@ -89,7 +84,6 @@ class _FakeHermesCronAdapter(HermesCronAdapter):
         return self._module
 
 
-@pytest.mark.skipif(not _has_hermes_cli, reason="hermes-agent not installed")
 def test_hermes_adapters_import_real_installed_symbols(monkeypatch) -> None:
     """Hermes adapter classes resolve the installed Hermes v0.15.1 modules."""
     isolated_home = Path.cwd() / ".hermes-test"
@@ -277,7 +271,6 @@ def test_hermes_cron_reconcile_keeps_explicit_same_name_foreign_job_untouched() 
     assert module.jobs == [foreign]
 
 
-@pytest.mark.skipif(not _has_hermes_cli, reason="hermes-agent not installed")
 def test_hermes_prompt_injector_uses_visible_wiki_block(monkeypatch, tmp_path) -> None:
     from fixtures.factory import build_test_wiki
 
@@ -295,7 +288,6 @@ def test_hermes_prompt_injector_uses_visible_wiki_block(monkeypatch, tmp_path) -
     assert "Use wiki_search" in block
 
 
-@pytest.mark.skipif(not _has_hermes_cli, reason="hermes-agent not installed")
 def test_hermes_prompt_injection_installs_idempotent_system_prompt_wrapper(
     monkeypatch, tmp_path
 ) -> None:
