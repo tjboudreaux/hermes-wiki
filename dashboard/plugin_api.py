@@ -7,6 +7,7 @@ behavior stay aligned.
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field
 from hermes_wiki import db
 from hermes_wiki.attribution import list_log_entries
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown
+from hermes_wiki.home import WikiResolutionError, resolve_home
 from hermes_wiki.lint import lint_wiki
 from hermes_wiki.management import (
     NOT_FOUND_OR_NOT_VISIBLE,
@@ -68,7 +70,7 @@ class InboxClassifyRequest(BaseModel):
 def list_wikis() -> list[dict[str, Any]]:
     """Return visible Wiki metadata only."""
 
-    return [_wiki_row(row) for row in visible_wikis()]
+    return [_wiki_row(row) for row in _visible_wiki_rows()]
 
 
 @router.get("/search")
@@ -80,7 +82,7 @@ def global_search(q: str, limit: int = 10, wiki: str | None = None) -> dict[str,
         return search(wiki, q=q, limit=safe_limit)
 
     results: list[dict[str, Any]] = []
-    for row in visible_wikis():
+    for row in _visible_wiki_rows():
         slug = str(row.get("slug") or "")
         if not slug:
             continue
@@ -392,6 +394,36 @@ def _require_write(slug: str) -> tuple[str, Path]:
             detail=WRITE_PERMISSION_DENIED,
         )
     return visible_slug, wiki_root
+
+
+def _visible_wiki_rows() -> list[dict[str, Any]]:
+    """Return visible registry rows, initializing an absent empty-home registry lazily."""
+
+    _ensure_registry_for_empty_home()
+    return visible_wikis()
+
+
+def _ensure_registry_for_empty_home() -> None:
+    """Create the registry projection only when a request first needs it.
+
+    Importing this plugin must not touch ``HERMES_HOME`` because Hermes mounts
+    dashboard API routes while discovering plugins. A brand-new home may not
+    have ``wikis/`` or ``wikis.db`` yet, so initialize just the empty registry
+    here at request time and let normal populated-home reads proceed unchanged.
+    """
+
+    try:
+        registry = resolve_home() / "wikis" / "wikis.db"
+    except WikiResolutionError:
+        return
+    if registry.exists():
+        return
+    try:
+        with db.connect_registry(registry) as conn:
+            db.initialize_registry(conn)
+            conn.commit()
+    except (OSError, sqlite3.DatabaseError):
+        return
 
 
 def _registry_row(slug: str, wiki_root: Path) -> dict[str, Any]:

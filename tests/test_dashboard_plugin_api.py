@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 
 from fixtures import build_populated_home
 from hermes_wiki.attribution import append_log_entry
@@ -40,6 +40,28 @@ def test_wikis_endpoint_excludes_archived_and_private(plugin_api: Any) -> None:
     assert [row["slug"] for row in rows] == ["ai-tooling"]
     assert rows[0]["domain"] == "AI agents, coding tools, and research workflows"
     assert {"slug", "domain", "page_count", "health_score", "last_ingest"} <= set(rows[0])
+
+
+def test_wikis_route_mounts_and_returns_empty_for_fresh_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_PROFILE", "test-profile")
+    monkeypatch.delenv("HERMES_WIKI", raising=False)
+
+    plugin_api = _load_plugin_api()
+    registry = home / "wikis" / "wikis.db"
+    assert not registry.exists(), "plugin import must not touch home state"
+
+    app = FastAPI()
+    app.include_router(plugin_api.router, prefix="/api/plugins/wiki")
+    assert "/api/plugins/wiki/wikis" in {getattr(route, "path", "") for route in app.routes}
+
+    assert plugin_api.list_wikis() == []
+    assert registry.is_file()
 
 
 def test_wiki_subroutes_deny_invisible_and_archived_without_disclosure(plugin_api: Any) -> None:
