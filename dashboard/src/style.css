@@ -298,6 +298,27 @@
   margin-top: 0.75rem;
 }
 
+.hermes-wiki-skills-card .hermes-wiki-skill-field {
+  color: var(--muted-foreground, #94a3b8);
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  text-transform: uppercase;
+}
+
+.hermes-wiki-skills-card .hermes-wiki-skill-field input {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-transform: none;
+}
+
+.hermes-wiki-skill-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
 .hermes-wiki-inbox-open {
   color: inherit;
   text-decoration: none;

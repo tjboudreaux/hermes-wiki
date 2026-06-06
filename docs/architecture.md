@@ -106,6 +106,10 @@ hermes-wiki plugins trust classifier <name> --wiki <slug>
 
 Untrusted plugin files are visible in lint but never loaded or executed.
 
+This trust-before-execute system generalizes into per-wiki hook points
+(taxonomy, lint, pre/post-ingest) — see the
+[Per-Wiki Hooks Architecture](hooks-architecture.md).
+
 ### Re-ingestion and Drift
 
 When a source URL is re-ingested:

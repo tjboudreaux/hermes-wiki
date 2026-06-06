@@ -26,6 +26,7 @@ With Hermes Wiki:
 | [CLI Reference](cli-reference.md) | Full command documentation |
 | [Agent Tools](agent-tools.md) | Using wikis from Hermes agent conversations |
 | [Architecture](architecture.md) | Storage, pipeline, adapters, privacy |
+| [Hooks Architecture](hooks-architecture.md) | Per-wiki executable customization design |
 | [Dashboard](dashboard.md) | Web UI setup and views |
 | [Karpathy Pattern](karpathy-pattern.md) | How Hermes Wiki implements the LLM Wiki concept |
 

@@ -390,6 +390,7 @@
             "aside",
             { className: "hermes-wiki-side-stack" },
             h(HealthCard, { score, health, slug: summary.slug }),
+            h(SkillsCard, { slug: summary.slug }),
             h(ActivityTimeline, { entries: activity, slug: summary.slug })
           )
         )
@@ -439,6 +440,81 @@
         h(Button, { disabled: !pagination.has_previous, onClick: () => props.onPage(Math.max(1, pagination.page - 1)) }, "Previous"),
         h("span", null, `Page ${pagination.page} of ${pageCount}`),
         h(Button, { disabled: !pagination.has_next, onClick: () => props.onPage(pagination.page + 1) }, "Next")
+      );
+    }, SkillsCard = function(props) {
+      const [skills, setSkills] = useState(null);
+      const [ingestion, setIngestion] = useState("");
+      const [writing, setWriting] = useState("");
+      const [error, setError] = useState("");
+      const [notice, setNotice] = useState("");
+      const [saving, setSaving] = useState(false);
+      const skillsUrl = `/api/plugins/wiki/wikis/${encodeURIComponent(props.slug)}/skills`;
+      const load = useCallback(() => {
+        setError("");
+        SDK.fetchJSON(skillsUrl).then((row) => {
+          setSkills(row);
+          setIngestion(row.skills.ingestion || "");
+          setWriting(row.skills.writing || "");
+        }).catch((err) => setError(messageOf(err)));
+      }, [props.slug]);
+      useEffect(() => {
+        load();
+      }, [load]);
+      const dirty = skills ? ingestion !== skills.skills.ingestion || writing !== skills.skills.writing : false;
+      const save = () => {
+        if (!skills) return;
+        const payload = {};
+        if (ingestion !== skills.skills.ingestion) payload.ingestion = ingestion.trim();
+        if (writing !== skills.skills.writing) payload.writing = writing.trim();
+        setSaving(true);
+        setError("");
+        setNotice("");
+        SDK.fetchJSON(skillsUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).then((row) => {
+          setSkills(row);
+          setIngestion(row.skills.ingestion || "");
+          setWriting(row.skills.writing || "");
+          setNotice("Skills saved.");
+        }).catch((err) => setError(messageOf(err))).finally(() => setSaving(false));
+      };
+      const renderField = (label, value, fallback, onChange) => h(
+        "label",
+        { className: "hermes-wiki-skill-field" },
+        label,
+        h(Input, {
+          value,
+          placeholder: fallback,
+          disabled: !skills || saving,
+          onChange: (event) => onChange(event.target.value)
+        }),
+        value && value === fallback ? h("span", { className: "hermes-wiki-muted" }, "default") : null
+      );
+      return h(
+        Card,
+        { className: "hermes-wiki-skills-card" },
+        h(
+          CardHeader,
+          { className: "hermes-wiki-card-header" },
+          h(CardTitle, null, "Skills"),
+          h(Badge, null, "per-wiki")
+        ),
+        h(
+          CardContent,
+          null,
+          h("p", { className: "hermes-wiki-muted" }, "Skills that guide agents ingesting into and writing for this Wiki."),
+          renderField("Ingestion", ingestion, skills?.defaults.ingestion || "", setIngestion),
+          renderField("Writing", writing, skills?.defaults.writing || "", setWriting),
+          error ? h("p", { className: "hermes-wiki-health-bad", role: "alert" }, error) : null,
+          notice ? h("p", { className: "hermes-wiki-health-good" }, notice) : null,
+          h(
+            "div",
+            { className: "hermes-wiki-skill-actions" },
+            h(Button, { disabled: !dirty || saving || !ingestion.trim() || !writing.trim(), onClick: save }, saving ? "Saving\u2026" : "Save")
+          )
+        )
       );
     }, HealthCard = function(props) {
       const summary = props.health?.summary || {};

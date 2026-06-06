@@ -5,11 +5,15 @@ Discovered via the ``hermes_agent.plugins`` entry-point group defined in
 
 1. ``hermes wiki <verb> …`` — a top-level CLI subcommand (mirrors kanban)
 2. ``/wiki <verb> …`` — an in-session slash command
+3. Packaged wiki skills — resolvable as ``wiki:<skill-name>``
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+
+SKILLS_ROOT = Path(__file__).resolve().parent / "skills"
 
 
 def register(ctx: Any) -> None:
@@ -17,6 +21,7 @@ def register(ctx: Any) -> None:
 
     _register_cli(ctx)
     _register_slash(ctx)
+    _register_skills(ctx)
 
 
 def _register_cli(ctx: Any) -> None:
@@ -55,4 +60,34 @@ def _register_slash(ctx: Any) -> None:
     )
 
 
-__all__ = ["register"]
+def _register_skills(ctx: Any) -> None:
+    """Register packaged SKILL.md files as ``wiki:<name>`` plugin skills.
+
+    Older Hermes versions without ``register_skill`` are tolerated silently so
+    the CLI and slash surfaces keep working.
+    """
+
+    register_skill = getattr(ctx, "register_skill", None)
+    if not callable(register_skill) or not SKILLS_ROOT.is_dir():
+        return
+    for skill_dir in sorted(SKILLS_ROOT.iterdir()):
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        register_skill(
+            name=skill_dir.name,
+            path=skill_md,
+            description=_skill_description(skill_md),
+        )
+
+
+def _skill_description(skill_md: Path) -> str:
+    """Pull the frontmatter ``description`` without requiring a YAML parser."""
+
+    for line in skill_md.read_text(encoding="utf-8").splitlines():
+        if line.startswith("description:"):
+            return line.split(":", 1)[1].strip().strip('"')
+    return ""
+
+
+__all__ = ["SKILLS_ROOT", "register"]
