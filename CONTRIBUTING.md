@@ -38,12 +38,30 @@ npm run build
 - **Adapters isolate integration** — `adapters/base.py` defines Protocol seams; standalone and hermes implement them
 - **Trust before execute** — custom classifiers/processors need explicit trust (path + sha256)
 
+## Commit Messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are
+automated by [release-please](https://github.com/googleapis/release-please) on
+every push to `main`:
+
+- `feat:` — new feature → **minor** version bump
+- `fix:` — bug fix → **patch** version bump
+- `feat!:` or a `BREAKING CHANGE:` footer → **major** version bump
+- `docs:`, `test:`, `refactor:`, `perf:`, `ci:`, `build:`, `chore:` — no release
+
+release-please opens a Release PR that bumps `pyproject.toml` and
+`dashboard/package.json`, updates `CHANGELOG.md`, and — once merged — tags the
+release (e.g. `v0.2.0`) and publishes a GitHub Release.
+
+**When squash-merging, the PR title must be a Conventional Commit** — it becomes
+the commit subject release-please parses.
+
 ## Pull Request Process
 
 1. Create a feature branch from `main`
 2. Write tests for new behavior
 3. Ensure `uv run pytest`, `uv run ruff check .`, and `uv run ty check` pass
-4. Keep commits focused and well-described
+4. Keep commits focused and well-described, using Conventional Commit messages
 5. Reference any related issues
 
 ## Project Structure
