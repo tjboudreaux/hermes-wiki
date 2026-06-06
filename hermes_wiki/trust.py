@@ -18,6 +18,7 @@ from hermes_wiki.management import (
     ensure_wiki_mutable,
     resolved_author,
 )
+from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
 
 
 class TrustError(RuntimeError):
@@ -35,12 +36,12 @@ def list_plugins(*, wiki: str | None = None) -> list[dict[str, Any]]:
     """List built-in plugins and custom plugin files with trust state."""
 
     try:
-        resolved = ensure_wiki_mutable(slug=wiki)
-    except WikiManagementError as exc:
+        _slug, wiki_root = require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
         raise TrustError(NOT_FOUND_OR_NOT_VISIBLE) from exc
     trusted = {
         (record["kind"], record["name"]): record
-        for record in read_schema_trust_records(resolved.path)
+        for record in read_schema_trust_records(wiki_root)
     }
     rows: list[dict[str, Any]] = [
         {
@@ -62,7 +63,7 @@ def list_plugins(*, wiki: str | None = None) -> list[dict[str, Any]]:
         }
     )
     for kind, dirname in (("classifier", "classifiers"), ("processor", "processors")):
-        plugin_dir = resolved.path / "plugins" / dirname
+        plugin_dir = wiki_root / "plugins" / dirname
         seen_names: set[str] = set()
         for path in sorted(plugin_dir.glob("*.py")):
             name = path.stem
@@ -83,7 +84,7 @@ def list_plugins(*, wiki: str | None = None) -> list[dict[str, Any]]:
                 {
                     "kind": kind,
                     "name": name,
-                    "path": path.relative_to(resolved.path).as_posix(),
+                    "path": path.relative_to(wiki_root).as_posix(),
                     "sha256": shown_sha,
                     "status": status,
                 }

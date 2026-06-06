@@ -11,9 +11,9 @@ from hermes_wiki.frontmatter import FrontmatterError, read_markdown
 from hermes_wiki.management import (
     NOT_FOUND_OR_NOT_VISIBLE,
     WikiManagementError,
-    ensure_wiki_mutable,
 )
 from hermes_wiki.projection import PAGE_DIR_TYPES
+from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
 
 Row = dict[str, Any]
 
@@ -31,15 +31,15 @@ def list_wiki_pages(
     """List visible, non-archived Wiki Pages with optional type/tag filters."""
 
     try:
-        resolved = ensure_wiki_mutable(slug=wiki)
-    except WikiManagementError as exc:
+        _slug, wiki_root = require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
         raise WikiNavigationError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
     from hermes_wiki.lint import ensure_projection_current
 
-    ensure_projection_current(resolved.path)
+    ensure_projection_current(wiki_root)
     try:
-        with db.connect_wiki(resolved.path / "wiki.db") as conn:
+        with db.connect_wiki(wiki_root / "wiki.db") as conn:
             return db.list_pages(conn, page_type=page_type, tag=tag, include_archived=False)
     except sqlite3.DatabaseError as exc:
         raise WikiNavigationError(f"list-pages failed: {exc}") from exc
@@ -54,15 +54,15 @@ def open_wiki_page(
 
     clean_id = validate_page_id(page_id)
     try:
-        resolved = ensure_wiki_mutable(slug=wiki)
-    except WikiManagementError as exc:
+        _slug, wiki_root = require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
         raise WikiNavigationError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
     from hermes_wiki.lint import ensure_projection_current
 
-    ensure_projection_current(resolved.path)
+    ensure_projection_current(wiki_root)
     try:
-        with db.connect_wiki(resolved.path / "wiki.db") as conn:
+        with db.connect_wiki(wiki_root / "wiki.db") as conn:
             row = db.get_page(conn, clean_id)
     except sqlite3.DatabaseError as exc:
         raise WikiNavigationError(f"open failed: {exc}") from exc
@@ -70,7 +70,7 @@ def open_wiki_page(
     if row is None or int(row.get("archived") or 0):
         raise WikiNavigationError(f"page not found: {clean_id}")
 
-    page_path = _page_path(resolved.path, clean_id)
+    page_path = _page_path(wiki_root, clean_id)
     if page_path is None or not page_path.is_file():
         raise WikiNavigationError(f"page not found: {clean_id}")
     try:

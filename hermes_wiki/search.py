@@ -64,7 +64,8 @@ def search_wiki(
 ) -> list[Row]:
     """Search one resolved visible Wiki with FTS5 BM25 ranking."""
 
-    from hermes_wiki.management import WikiManagementError, ensure_wiki_mutable
+    from hermes_wiki.management import WikiManagementError
+    from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
 
     if limit <= 0:
         return []
@@ -72,16 +73,16 @@ def search_wiki(
     if fts_query is None:
         return []
     try:
-        resolved = ensure_wiki_mutable(slug=wiki)
-    except WikiManagementError as exc:
+        _slug, wiki_root = require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
         raise WikiManagementError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
     from hermes_wiki import db
     from hermes_wiki.lint import ensure_projection_current
 
-    ensure_projection_current(resolved.path)
+    ensure_projection_current(wiki_root)
     try:
-        with db.connect_wiki(resolved.path / "wiki.db") as conn:
+        with db.connect_wiki(wiki_root / "wiki.db") as conn:
             return db.search_pages(conn, fts_query, limit=limit)
     except sqlite3.DatabaseError as exc:
         raise WikiManagementError(f"search failed: {exc}") from exc

@@ -18,6 +18,7 @@ from hermes_wiki.management import (
     ensure_wiki_mutable,
 )
 from hermes_wiki.navigation import WikiNavigationError, validate_page_id
+from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
 
 TASK_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
@@ -234,23 +235,23 @@ def unlink_page_from_task(
 def refs_for_page(page_id: str, *, wiki: str | None = None) -> list[dict[str, Any]]:
     """Return linked tasks for one Wiki Page from the projection."""
 
-    resolved = _resolve_wiki(wiki)
-    clean_page_id = _existing_page_id(resolved.path, page_id)
-    _ensure_projection(resolved.path)
-    with db.connect_wiki(resolved.path / "wiki.db") as conn:
+    slug, wiki_root = _resolve_visible_wiki(wiki)
+    clean_page_id = _existing_page_id(wiki_root, page_id)
+    _ensure_projection(wiki_root)
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
         rows = db.list_kanban_refs(conn, page_id=clean_page_id)
-    return [_decorate_ref(row, wiki=resolved.slug) for row in rows]
+    return [_decorate_ref(row, wiki=slug) for row in rows]
 
 
 def refs_for_task(task_id: str, *, wiki: str | None = None) -> list[dict[str, Any]]:
     """Return pages linked to one task, answered from the wiki projection."""
 
-    resolved = _resolve_wiki(wiki)
+    slug, wiki_root = _resolve_visible_wiki(wiki)
     clean_task_id = _clean_task_id(task_id)
-    _ensure_projection(resolved.path)
-    with db.connect_wiki(resolved.path / "wiki.db") as conn:
+    _ensure_projection(wiki_root)
+    with db.connect_wiki(wiki_root / "wiki.db") as conn:
         rows = db.list_kanban_refs(conn, task_id=clean_task_id)
-    return [_decorate_ref(row, wiki=resolved.slug) for row in rows]
+    return [_decorate_ref(row, wiki=slug) for row in rows]
 
 
 def normalize_kanban_refs(value: Any, *, page_id: str | None = None) -> list[dict[str, Any]]:
@@ -380,6 +381,13 @@ def _resolve_wiki(wiki: str | None) -> Any:
     try:
         return ensure_wiki_mutable(slug=wiki)
     except WikiManagementError as exc:
+        raise KanbanLinkError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+
+def _resolve_visible_wiki(wiki: str | None) -> tuple[str, Path]:
+    try:
+        return require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
         raise KanbanLinkError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
 

@@ -488,14 +488,16 @@ def search_wiki(
 def list_inbox(*, wiki: str | None = None) -> list[dict[str, str]]:
     """List unprocessed inbox files for one Wiki."""
 
+    from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
+
     try:
-        resolved = ensure_wiki_mutable(slug=wiki)
-    except WikiManagementError as exc:
+        _slug, wiki_root = require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
         raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
-    inbox = resolved.path / "raw" / "inbox"
+    inbox = wiki_root / "raw" / "inbox"
     if not inbox.exists():
         return []
-    statuses = _load_inbox_status(resolved.path)
+    statuses = _load_inbox_status(wiki_root)
     rows: list[dict[str, str]] = []
     for path in sorted(item for item in inbox.iterdir() if item.is_file()):
         recorded = statuses.get(path.name, {})
@@ -1021,32 +1023,6 @@ def _no_change_result(
     )
 
 
-def _skip_if_url_unchanged(wiki_root: Path, url: str, digest: str) -> IngestResult | None:
-    wiki_db = wiki_root / "wiki.db"
-    if not wiki_db.exists():
-        return None
-    with db.connect_wiki(wiki_db) as conn:
-        row = conn.execute(
-            "SELECT * FROM sources WHERE source_url = ? AND is_latest = 1 ORDER BY version DESC",
-            (url,),
-        ).fetchone()
-        if row is not None and row["sha256"] == digest:
-            return IngestResult(
-                wiki=wiki_root.name,
-                classified_as=str(row["classified_as"] or "unknown"),
-                source_id=str(row["id"]),
-                sha256=digest,
-                pages_created=(),
-                pages_updated=(),
-                raw_snapshot=str(row["source_path"]),
-                source_url=url,
-                commit_id=None,
-                skipped=True,
-                message="no change",
-            )
-    return None
-
-
 def _write_or_merge_page(
     path: Path,
     *,
@@ -1436,12 +1412,6 @@ def _as_list(value: object) -> list[object]:
     if isinstance(value, tuple):
         return list(value)
     return [value]
-
-
-def _fts_query(query: str) -> str:
-    from hermes_wiki.search import build_fts_query
-
-    return build_fts_query(query) or ""
 
 
 def _utc_now() -> str:

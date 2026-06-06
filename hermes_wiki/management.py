@@ -226,7 +226,7 @@ def ensure_wiki_mutable(
     home_resolver: HomeResolver | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ResolvedWiki:
-    """Resolve a wiki for mutation and deny archived/non-visible wikis."""
+    """Resolve a wiki for CLI/core mutation paths and deny archived/non-visible wikis."""
 
     resolved = _resolve_for_read(slug=slug, profile=profile, home_resolver=home_resolver, env=env)
     row = _visible_registry_row(resolved.slug, home=resolved.home, include_archived=False)
