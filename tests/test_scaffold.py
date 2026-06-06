@@ -25,6 +25,13 @@ def test_project_metadata_exposes_console_script() -> None:
     assert "hermes-wiki" in script_names
 
 
+def test_project_metadata_summary_is_plugin_list_ready() -> None:
+    """The package summary is suitable for ``hermes plugins list`` output."""
+    metadata = importlib.metadata.metadata("hermes-wiki")
+
+    assert metadata["Summary"].startswith("Karpathy-style LLM Wikis")
+
+
 def test_cli_version_exits_successfully(capsys: pytest.CaptureFixture[str]) -> None:
     """The standalone CLI can execute a minimal version command."""
     exit_code = main(["--version"])
