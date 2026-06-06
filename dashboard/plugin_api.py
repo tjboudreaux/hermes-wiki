@@ -32,7 +32,17 @@ from hermes_wiki.management import (
     create_wiki as core_create_wiki,
 )
 from hermes_wiki.navigation import WikiNavigationError, validate_page_id
-from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, set_inbox_classification
+from hermes_wiki.pipeline import (
+    InboxFileNotTextError,
+    InboxFileTooLargeError,
+    IngestError,
+    delete_inbox_file,
+    ingest_inbox,
+    ingest_source,
+    read_inbox_file,
+    set_inbox_classification,
+    write_inbox_file,
+)
 from hermes_wiki.search import search_wiki
 from hermes_wiki.visibility import (
     WikiVisibilityError,
@@ -64,6 +74,12 @@ class InboxClassifyRequest(BaseModel):
     """Payload for overriding an inbox file's classifier assignment."""
 
     classifier: str
+
+
+class InboxFileUpdateRequest(BaseModel):
+    """Payload for replacing one inbox file's content."""
+
+    content: str
 
 
 @router.get("/wikis")
@@ -305,6 +321,51 @@ def reclassify_inbox_item(
     return _inbox_row(row, wiki_root)
 
 
+@router.get("/wikis/{slug}/inbox/{filename}")
+def get_inbox_file(slug: str, filename: str) -> dict[str, Any]:
+    """Return the content and status metadata for one inbox file."""
+
+    _require_visible(slug)
+    try:
+        row = read_inbox_file(wiki=slug, filename=filename)
+    except IngestError as exc:
+        raise _inbox_file_error(exc) from exc
+    return _inbox_file_payload(row)
+
+
+@router.put("/wikis/{slug}/inbox/{filename}")
+def update_inbox_file(
+    slug: str,
+    filename: str,
+    payload: InboxFileUpdateRequest,
+) -> dict[str, Any]:
+    """Replace the content of one inbox file."""
+
+    _require_write(slug)
+    try:
+        row = write_inbox_file(
+            wiki=slug,
+            filename=filename,
+            content=payload.content,
+            author_kind="human",
+        )
+    except IngestError as exc:
+        raise _inbox_file_error(exc) from exc
+    return _inbox_file_payload(row)
+
+
+@router.delete("/wikis/{slug}/inbox/{filename}")
+def delete_inbox_file_route(slug: str, filename: str) -> dict[str, Any]:
+    """Delete one inbox file and clear its status entry."""
+
+    _require_write(slug)
+    try:
+        row = delete_inbox_file(wiki=slug, filename=filename, author_kind="human")
+    except IngestError as exc:
+        raise _inbox_file_error(exc) from exc
+    return _inbox_file_payload(row)
+
+
 @router.get("/wikis/{slug}/health")
 def get_health(slug: str) -> dict[str, Any]:
     """Return structured lint report for one visible Wiki."""
@@ -529,6 +590,25 @@ def _inbox_row(row: Mapping[str, Any], wiki_root: Path) -> dict[str, Any]:
         "last_attempted_at": row.get("last_attempted_at"),
         "size_bytes": int(row.get("size_bytes") or _safe_size(wiki_root / path)),
     }
+
+
+def _inbox_file_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    filename = str(row.get("name") or "")
+    payload = dict(row)
+    payload["filename"] = filename
+    return payload
+
+
+def _inbox_file_error(exc: IngestError) -> HTTPException:
+    if isinstance(exc, InboxFileTooLargeError):
+        return HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(exc))
+    if isinstance(exc, InboxFileNotTextError):
+        return HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc))
+    if str(exc) == NOT_FOUND_OR_NOT_VISIBLE:
+        return _not_visible()
+    if str(exc) == "inbox file not found":
+        return _not_found(str(exc))
+    return _bad_request(str(exc))
 
 
 def _finding_row(finding: Mapping[str, Any]) -> dict[str, Any]:
