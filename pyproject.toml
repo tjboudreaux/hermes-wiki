@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "hermes-wiki"
 version = "0.1.0"
-description = "Hermes Wiki Plugin package scaffold"
+description = "Karpathy-style LLM Wikis for Hermes Agent — persistent, curated, attributable knowledge bases"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "Hermes Wiki contributors" }]
