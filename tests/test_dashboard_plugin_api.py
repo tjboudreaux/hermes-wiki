@@ -396,3 +396,160 @@ def test_dashboard_existing_wiki_mutations_require_write_grant(
 
     assert allowed["status"] == "ok"
     assert allowed["result"]["pages_created"]
+
+
+def test_inbox_file_read_returns_content(plugin_api: Any) -> None:
+    detail = plugin_api.get_inbox_file("ai-tooling", "unknown-sample.dat")
+
+    assert detail["filename"] == "unknown-sample.dat"
+    assert detail["name"] == "unknown-sample.dat"
+    assert detail["path"] == "raw/inbox/unknown-sample.dat"
+    assert detail["content"]
+    assert detail["size_bytes"] == len(detail["content"].encode("utf-8"))
+    assert detail["status"] == "not yet attempted"
+    assert detail["classifier"] == "unknown"
+
+
+def test_inbox_file_oversized_read_refused(plugin_api: Any) -> None:
+    with pytest.raises(HTTPException) as refused:
+        plugin_api.get_inbox_file("ai-tooling", "oversized-sample.bin")
+
+    assert refused.value.status_code == 413
+
+
+def test_inbox_file_non_utf8_read_refused(plugin_api: Any) -> None:
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+    binary_path = wiki_root / "raw" / "inbox" / "binary-sample.bin"
+    binary_path.write_bytes(b"\xff\xfe\x00binary payload")
+
+    with pytest.raises(HTTPException) as refused:
+        plugin_api.get_inbox_file("ai-tooling", "binary-sample.bin")
+
+    assert refused.value.status_code == 415
+
+
+def test_inbox_file_write_round_trips(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+    status_path = wiki_root / "raw" / "inbox_status.json"
+
+    updated = plugin_api.update_inbox_file(
+        "ai-tooling",
+        "unknown-sample.dat",
+        plugin_api.InboxFileUpdateRequest(content="Edited inbox body.\n"),
+    )
+
+    assert updated["filename"] == "unknown-sample.dat"
+    assert updated["content"] == "Edited inbox body.\n"
+    assert updated["status"] == "edited"
+
+    reread = plugin_api.get_inbox_file("ai-tooling", "unknown-sample.dat")
+    assert reread["content"] == "Edited inbox body.\n"
+    on_disk = (wiki_root / "raw" / "inbox" / "unknown-sample.dat").read_text(encoding="utf-8")
+    assert on_disk == "Edited inbox body.\n"
+
+    statuses = json.loads(status_path.read_text(encoding="utf-8"))
+    assert statuses["unknown-sample.dat"]["status"] == "edited"
+    assert statuses["unknown-sample.dat"]["sha256"]
+
+
+def test_inbox_file_delete_removes_file_and_status(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+    status_path = wiki_root / "raw" / "inbox_status.json"
+    plugin_api.reclassify_inbox_item(
+        "ai-tooling",
+        "unknown-sample.dat",
+        plugin_api.InboxClassifyRequest(classifier="article"),
+    )
+    assert "unknown-sample.dat" in json.loads(status_path.read_text(encoding="utf-8"))
+
+    deleted = plugin_api.delete_inbox_file_route("ai-tooling", "unknown-sample.dat")
+
+    assert deleted["filename"] == "unknown-sample.dat"
+    assert deleted["status"] == "deleted"
+    assert not (wiki_root / "raw" / "inbox" / "unknown-sample.dat").exists()
+    assert "unknown-sample.dat" not in json.loads(status_path.read_text(encoding="utf-8"))
+    remaining = plugin_api.get_inbox("ai-tooling")
+    assert all(row["filename"] != "unknown-sample.dat" for row in remaining)
+
+
+def test_inbox_file_traversal_rejected(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+
+    for hostile in ("../wiki.db", "sub/dir.txt", "/etc/passwd", "..\\escape.md", "  "):
+        with pytest.raises(HTTPException) as read_exc:
+            plugin_api.get_inbox_file("ai-tooling", hostile)
+        assert read_exc.value.status_code == 400
+
+        with pytest.raises(HTTPException) as write_exc:
+            plugin_api.update_inbox_file(
+                "ai-tooling",
+                hostile,
+                plugin_api.InboxFileUpdateRequest(content="overwritten"),
+            )
+        assert write_exc.value.status_code == 400
+
+        with pytest.raises(HTTPException) as delete_exc:
+            plugin_api.delete_inbox_file_route("ai-tooling", hostile)
+        assert delete_exc.value.status_code == 400
+
+    assert (wiki_root / "wiki.db").is_file()
+
+
+def test_inbox_file_write_requires_write_grant(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HERMES_WIKI", raising=False)
+    wiki_root = Path(plugin_api.get_wiki("ai-tooling")["path"])
+    original = (wiki_root / "raw" / "inbox" / "unknown-sample.dat").read_bytes()
+
+    with pytest.raises(HTTPException) as write_denied:
+        plugin_api.update_inbox_file(
+            "ai-tooling",
+            "unknown-sample.dat",
+            plugin_api.InboxFileUpdateRequest(content="denied"),
+        )
+    assert write_denied.value.status_code == 403
+    assert write_denied.value.detail == "wiki write permission denied"
+
+    with pytest.raises(HTTPException) as delete_denied:
+        plugin_api.delete_inbox_file_route("ai-tooling", "unknown-sample.dat")
+    assert delete_denied.value.status_code == 403
+
+    assert (wiki_root / "raw" / "inbox" / "unknown-sample.dat").read_bytes() == original
+
+
+def test_inbox_file_invisible_wiki_hidden(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_WIKI", "private-lab")
+    for slug in ("private-lab", "ungodly-economy"):
+        with pytest.raises(HTTPException) as read_exc:
+            plugin_api.get_inbox_file(slug, "anything.md")
+        assert read_exc.value.status_code == 404
+        assert read_exc.value.detail == "not found or not visible"
+
+        with pytest.raises(HTTPException) as write_exc:
+            plugin_api.update_inbox_file(
+                slug,
+                "anything.md",
+                plugin_api.InboxFileUpdateRequest(content="nope"),
+            )
+        assert write_exc.value.status_code == 404
+
+        with pytest.raises(HTTPException) as delete_exc:
+            plugin_api.delete_inbox_file_route(slug, "anything.md")
+        assert delete_exc.value.status_code == 404
