@@ -26,6 +26,7 @@ from hermes_wiki.management import (
     switch_wiki,
 )
 from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors, sweep_external_source
+from hermes_wiki.skills import SkillsError, read_wiki_skills, set_wiki_skill
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
@@ -316,6 +317,32 @@ def wiki_command(args: argparse.Namespace) -> int:
             print(f"SCHEMA.md: {result.path / 'SCHEMA.md'}")
             print("Cron: not scheduled (run monitor --setup in a later phase)")
             return 0
+        if verb == "skills":
+            if args.skills_command == "show":
+                result = read_wiki_skills(wiki=args.wiki, profile=args.profile)
+                print(f"wiki: {result['wiki']}")
+                for kind, skill in result["skills"].items():
+                    suffix = " (default)" if skill == result["defaults"].get(kind) else ""
+                    print(f"{kind}: {skill}{suffix}")
+                return 0
+            if args.skills_command == "set":
+                if not _require_write_grant(args.wiki, profile=args.profile):
+                    return 1
+                result = set_wiki_skill(
+                    args.kind,
+                    args.skill,
+                    wiki=args.wiki,
+                    profile=args.profile,
+                    author=args.author,
+                    author_kind="human",
+                )
+                print(
+                    f"Set {args.kind} skill to {result['skills'][args.kind]} "
+                    f"for wiki={result['wiki']}"
+                )
+                return 0
+            print("skills requires a subcommand: show|set", file=sys.stderr)
+            return 1
         if verb == "plugins":
             from hermes_wiki.trust import TrustError, list_plugins, trust_plugin, untrust_plugin
 
@@ -368,7 +395,14 @@ def wiki_command(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-    except (WikiManagementError, IngestError, WikiNavigationError, MonitorError, ValueError) as exc:
+    except (
+        WikiManagementError,
+        IngestError,
+        WikiNavigationError,
+        MonitorError,
+        SkillsError,
+        ValueError,
+    ) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     raise AssertionError(f"unhandled wiki command: {verb}")
@@ -547,6 +581,18 @@ def _add_management_subcommands(
         help="Skill name to include in the monitor payload (repeatable)",
     )
     monitor.add_argument("--author", help="Override the acting author for attribution")
+
+    skills = subparsers.add_parser("skills", help="Show or set per-wiki skill assignments")
+    skills_subparsers = skills.add_subparsers(dest="skills_command")
+    skills_show = skills_subparsers.add_parser("show", help="Show skill assignments")
+    skills_show.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    skills_show.add_argument("--profile", help="Profile for current-wiki resolution")
+    skills_set = skills_subparsers.add_parser("set", help="Assign a skill for one kind")
+    skills_set.add_argument("kind", choices=("ingestion", "writing"))
+    skills_set.add_argument("skill", help="Skill name, e.g. wiki:wiki-ingestion")
+    skills_set.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
+    skills_set.add_argument("--profile", help="Profile for current-wiki resolution")
+    skills_set.add_argument("--author", help="Override the acting author for attribution")
 
     plugins = subparsers.add_parser("plugins", help="List and trust custom plugins")
     plugin_subparsers = plugins.add_subparsers(dest="plugins_command")

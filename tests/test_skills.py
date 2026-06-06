@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,31 @@ from hermes_wiki.skills import (
     read_wiki_skills,
     set_wiki_skill,
 )
+from hermes_wiki_cli.cli import main
+
+
+def _run_cli(
+    home: Path,
+    *argv: str,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    merged = {"HERMES_HOME": str(home), "USER": "skills-tester", **(env or {})}
+    old_env = os.environ.copy()
+    old_out, old_err = sys.stdout, sys.stderr
+    out = StringIO()
+    err = StringIO()
+    try:
+        os.environ.clear()
+        os.environ.update(merged)
+        sys.stdout = out
+        sys.stderr = err
+        code = main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+    finally:
+        sys.stdout = old_out
+        sys.stderr = old_err
+        os.environ.clear()
+        os.environ.update(old_env)
 
 
 @pytest.fixture
@@ -107,3 +135,62 @@ def test_skills_surface_hides_unknown_wiki(wiki_root: Path) -> None:
         read_wiki_skills(wiki="no-such-wiki")
     with pytest.raises(SkillsError, match="not found or not visible"):
         set_wiki_skill("ingestion", "anything", wiki="no-such-wiki")
+
+
+def test_cli_skills_show_prints_defaults(tmp_path: Path) -> None:
+    code, _out, err = _run_cli(tmp_path, "create", "ai-tooling", "--domain", "AI tooling")
+    assert code == 0, err
+
+    code, out, err = _run_cli(tmp_path, "skills", "show", "--wiki", "ai-tooling")
+
+    assert code == 0, err
+    assert "wiki: ai-tooling" in out
+    assert "ingestion: wiki:wiki-ingestion (default)" in out
+    assert "writing: wiki:wiki-writing (default)" in out
+
+
+def test_cli_skills_set_requires_write_grant(tmp_path: Path) -> None:
+    code, _out, err = _run_cli(tmp_path, "create", "ai-tooling", "--domain", "AI tooling")
+    assert code == 0, err
+
+    code, _out, err = _run_cli(
+        tmp_path, "skills", "set", "ingestion", "research-ingest", "--wiki", "ai-tooling"
+    )
+    assert code == 1
+    assert "wiki write permission denied" in err
+
+    code, out, err = _run_cli(
+        tmp_path,
+        "skills",
+        "set",
+        "ingestion",
+        "research-ingest",
+        "--wiki",
+        "ai-tooling",
+        env={"HERMES_WIKI": "ai-tooling"},
+    )
+    assert code == 0, err
+    assert "Set ingestion skill to research-ingest for wiki=ai-tooling" in out
+
+    code, out, err = _run_cli(tmp_path, "skills", "show", "--wiki", "ai-tooling")
+    assert code == 0, err
+    assert "ingestion: research-ingest" in out
+    assert "(default)" not in out.split("ingestion:")[1].splitlines()[0]
+
+
+def test_cli_skills_set_rejects_bad_kind(tmp_path: Path) -> None:
+    code, _out, err = _run_cli(tmp_path, "create", "ai-tooling", "--domain", "AI tooling")
+    assert code == 0, err
+
+    code, _out, err = _run_cli(
+        tmp_path,
+        "skills",
+        "set",
+        "classification",
+        "anything",
+        "--wiki",
+        "ai-tooling",
+        env={"HERMES_WIKI": "ai-tooling"},
+    )
+
+    assert code == 2  # argparse choices rejection
