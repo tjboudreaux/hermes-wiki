@@ -231,6 +231,13 @@ class HermesKanbanReader:
 class HermesCronAdapter:
     """Adapter over installed Hermes cron job helpers."""
 
+    _BOOTSTRAP_SCHEDULE = "9999-12-31T23:59:00+00:00"
+    _BOOTSTRAP_PROMPT = (
+        "Hermes Wiki monitor bootstrap placeholder. "
+        "This job is not ready; do not run wiki monitor work."
+    )
+    _BOOTSTRAP_PAUSED_REASON = "hermes-wiki reconcile bootstrap"
+
     @property
     def module(self) -> ModuleType:
         return _import_hermes_module("cron.jobs")
@@ -251,6 +258,72 @@ class HermesCronAdapter:
             and name.startswith("wiki:")
             and isinstance(origin, Mapping)
             and origin.get("source") == "hermes-wiki"
+        )
+
+    @classmethod
+    def _bootstrap_origin(cls, origin: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(origin) | {"not_ready": True}
+
+    @staticmethod
+    def _explicitly_foreign(job: Mapping[str, Any]) -> bool:
+        origin = job.get("origin")
+        if not isinstance(origin, Mapping):
+            return False
+        source = origin.get("source")
+        return source is not None and source != "hermes-wiki"
+
+    @classmethod
+    def _is_repairable_incomplete_job(
+        cls,
+        job: Mapping[str, Any],
+        desired_job: MonitorJob,
+        *,
+        owner_prefix: str | None,
+    ) -> bool:
+        name = job.get("name")
+        if name != desired_job.name:
+            return False
+        if owner_prefix is not None and not str(name).startswith(owner_prefix):
+            return False
+        if cls._explicitly_foreign(job):
+            return False
+        origin = job.get("origin")
+        if isinstance(origin, Mapping) and (
+            origin.get("source") == "hermes-wiki" or origin.get("not_ready") is True
+        ):
+            return True
+        return job.get("prompt") == desired_job.prompt
+
+    def _activate_created_job(
+        self,
+        job_id: str,
+        desired_job: MonitorJob,
+        origin: Mapping[str, Any],
+    ) -> None:
+        desired_enabled = bool(desired_job.enabled)
+        self.module.update_job(
+            job_id,
+            {
+                "enabled": False,
+                "state": "paused",
+                "paused_reason": self._BOOTSTRAP_PAUSED_REASON,
+                "env": dict(desired_job.env),
+                "origin": dict(origin),
+            },
+        )
+        self.module.update_job(
+            job_id,
+            {
+                "prompt": desired_job.prompt,
+                "schedule": desired_job.schedule,
+                "skills": list(desired_job.skills),
+                "env": dict(desired_job.env),
+                "origin": dict(origin),
+                "enabled": desired_enabled,
+                "state": "scheduled" if desired_enabled else "paused",
+                "paused_at": None,
+                "paused_reason": None if desired_enabled else self._BOOTSTRAP_PAUSED_REASON,
+            },
         )
 
     def reconcile(
@@ -289,25 +362,26 @@ class HermesCronAdapter:
             origin = self._origin(desired_job)
             if current is None:
                 foreign = all_existing.get(name)
-                if foreign is not None and not self._is_wiki_job(foreign):
+                if foreign is not None and self._is_repairable_incomplete_job(
+                    foreign,
+                    desired_job,
+                    owner_prefix=owner_prefix,
+                ):
+                    current = foreign
+                elif foreign is not None and not self._is_wiki_job(foreign):
                     failed.append(name)
                     errors.append(f"collision: {name}")
                     continue
+            if current is None:
                 created_job = self.module.create_job(
-                    desired_job.prompt,
-                    desired_job.schedule,
+                    self._BOOTSTRAP_PROMPT,
+                    self._BOOTSTRAP_SCHEDULE,
                     name=name,
-                    origin=origin,
-                    skills=list(desired_job.skills),
-                    enabled_toolsets=["wiki"],
+                    origin=self._bootstrap_origin(origin),
+                    skills=[],
+                    enabled_toolsets=[],
                 )
-                self.module.update_job(
-                    str(created_job["id"]),
-                    {
-                        "env": dict(desired_job.env),
-                        "origin": origin,
-                    },
-                )
+                self._activate_created_job(str(created_job["id"]), desired_job, origin)
                 created.append(name)
                 continue
 
@@ -322,8 +396,18 @@ class HermesCronAdapter:
                 updates["env"] = dict(desired_job.env)
             if current.get("origin") != origin:
                 updates["origin"] = origin
-            if bool(current.get("enabled", True)) != desired_job.enabled:
-                updates["enabled"] = desired_job.enabled
+            desired_enabled = bool(desired_job.enabled)
+            if (
+                bool(current.get("enabled", True)) != desired_enabled
+                or (desired_enabled and current.get("state") == "paused")
+                or (not desired_enabled and current.get("state") != "paused")
+            ):
+                updates["enabled"] = desired_enabled
+                updates["state"] = "scheduled" if desired_enabled else "paused"
+                updates["paused_at"] = None
+                updates["paused_reason"] = (
+                    None if desired_enabled else self._BOOTSTRAP_PAUSED_REASON
+                )
             if updates:
                 self.module.update_job(str(current["id"]), updates)
                 updated.append(name)
