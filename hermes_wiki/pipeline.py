@@ -47,6 +47,14 @@ class IngestError(RuntimeError):
     """Raised for clean user-facing ingest failures."""
 
 
+class InboxFileTooLargeError(IngestError):
+    """Raised when an inbox file exceeds the Phase-1 ingest size cap."""
+
+
+class InboxFileNotTextError(IngestError):
+    """Raised when an inbox file is not valid UTF-8 text."""
+
+
 class ProcessorError(RuntimeError):
     """Raised when a source processor cannot produce pages."""
 
@@ -364,6 +372,187 @@ def set_inbox_classification(
         "last_classification": label.name,
         "last_attempted_at": now,
         "size_bytes": inbox_path.stat().st_size,
+        "commit_id": commit.commit_id,
+    }
+
+
+def _inbox_file_detail(
+    wiki_root: Path,
+    *,
+    slug: str,
+    clean_filename: str,
+    inbox_path: Path,
+    content: str,
+) -> dict[str, object]:
+    recorded = _load_inbox_status(wiki_root).get(clean_filename, {})
+    status = str(recorded.get("status") or "not yet attempted")
+    classifier = str(recorded.get("classified_as") or "unknown")
+    return {
+        "wiki": slug,
+        "name": clean_filename,
+        "path": inbox_path.relative_to(wiki_root).as_posix(),
+        "content": content,
+        "size_bytes": inbox_path.stat().st_size,
+        "status": status,
+        "classifier": classifier,
+    }
+
+
+def read_inbox_file(*, wiki: str | None, filename: str) -> dict[str, object]:
+    """Return the UTF-8 content and status metadata for one inbox file."""
+
+    from hermes_wiki.visibility import WikiVisibilityError, require_visible_wiki
+
+    try:
+        slug, wiki_root = require_visible_wiki(wiki)
+    except WikiVisibilityError as exc:
+        raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+    clean_filename = _clean_inbox_filename(filename)
+    inbox_path = wiki_root / "raw" / "inbox" / clean_filename
+    if not inbox_path.is_file():
+        raise IngestError("inbox file not found")
+    if inbox_path.stat().st_size > MAX_INGEST_BYTES:
+        raise InboxFileTooLargeError("oversized inbox files cannot be read")
+    try:
+        content = inbox_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise InboxFileNotTextError("inbox file is not valid UTF-8 text") from exc
+    return _inbox_file_detail(
+        wiki_root,
+        slug=slug,
+        clean_filename=clean_filename,
+        inbox_path=inbox_path,
+        content=content,
+    )
+
+
+def write_inbox_file(
+    *,
+    wiki: str | None,
+    filename: str,
+    content: str,
+    author: str | None = None,
+    author_kind: str | None = None,
+) -> dict[str, object]:
+    """Replace the content of one existing inbox file."""
+
+    try:
+        resolved = ensure_wiki_mutable(slug=wiki)
+    except WikiManagementError as exc:
+        raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+    clean_filename = _clean_inbox_filename(filename)
+    inbox_path = resolved.path / "raw" / "inbox" / clean_filename
+    if not inbox_path.is_file():
+        raise IngestError("inbox file not found")
+    if inbox_path.stat().st_size > MAX_INGEST_BYTES:
+        raise InboxFileTooLargeError("oversized inbox files cannot be edited")
+
+    acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
+    now = _utc_now()
+    relpath = inbox_path.relative_to(resolved.path).as_posix()
+    status_path = resolved.path / INBOX_STATUS_REL
+    log_path = resolved.path / "log.md"
+    touched: dict[Path, bytes | None] = {}
+    _remember(touched, inbox_path)
+    _remember(touched, status_path)
+    _remember(touched, log_path)
+    try:
+        inbox_path.write_text(content, encoding="utf-8")
+        digest = hashlib.sha256(inbox_path.read_bytes()).hexdigest()
+        statuses = _load_inbox_status(resolved.path)
+        entry = statuses.get(clean_filename, {})
+        entry.update(
+            {
+                "status": "edited",
+                "last_attempted_at": now,
+                "path": relpath,
+                "sha256": digest,
+            }
+        )
+        statuses[clean_filename] = entry
+        _write_inbox_status(resolved.path, statuses)
+        append_log_entry(
+            resolved.path,
+            timestamp=now,
+            action="inbox-edit",
+            target=relpath,
+            author=acting_author,
+            author_kind=acting_kind,
+            details={"source": relpath, "bytes": str(inbox_path.stat().st_size)},
+        )
+        git_ops.commit_change(
+            resolved.path,
+            action="inbox",
+            what=f"edit {clean_filename}",
+            author=acting_author,
+        )
+    except Exception:
+        _restore(touched)
+        raise
+    return _inbox_file_detail(
+        resolved.path,
+        slug=resolved.slug,
+        clean_filename=clean_filename,
+        inbox_path=inbox_path,
+        content=content,
+    )
+
+
+def delete_inbox_file(
+    *,
+    wiki: str | None,
+    filename: str,
+    author: str | None = None,
+    author_kind: str | None = None,
+) -> dict[str, object]:
+    """Delete one inbox file and clear its persisted status entry."""
+
+    try:
+        resolved = ensure_wiki_mutable(slug=wiki)
+    except WikiManagementError as exc:
+        raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
+
+    clean_filename = _clean_inbox_filename(filename)
+    inbox_path = resolved.path / "raw" / "inbox" / clean_filename
+    if not inbox_path.is_file():
+        raise IngestError("inbox file not found")
+
+    acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
+    now = _utc_now()
+    relpath = inbox_path.relative_to(resolved.path).as_posix()
+    status_path = resolved.path / INBOX_STATUS_REL
+    log_path = resolved.path / "log.md"
+    touched: dict[Path, bytes | None] = {}
+    _remember(touched, inbox_path)
+    _remember(touched, status_path)
+    _remember(touched, log_path)
+    try:
+        inbox_path.unlink()
+        _clear_inbox_status(resolved.path, clean_filename)
+        append_log_entry(
+            resolved.path,
+            timestamp=now,
+            action="inbox-delete",
+            target=relpath,
+            author=acting_author,
+            author_kind=acting_kind,
+            details={"source": relpath},
+        )
+        commit = git_ops.commit_change(
+            resolved.path,
+            action="inbox",
+            what=f"delete {clean_filename}",
+            author=acting_author,
+        )
+    except Exception:
+        _restore(touched)
+        raise
+    return {
+        "wiki": resolved.slug,
+        "name": clean_filename,
+        "path": relpath,
+        "status": "deleted",
         "commit_id": commit.commit_id,
     }
 
@@ -1463,13 +1652,18 @@ def _remove_empty_parents(path: Path) -> None:
 __all__ = [
     "DefaultProcessor",
     "GeneratedPage",
+    "InboxFileNotTextError",
+    "InboxFileTooLargeError",
     "IngestError",
     "IngestResult",
     "ProcessRequest",
     "ProcessorError",
     "classify_source",
+    "delete_inbox_file",
     "ingest_inbox",
     "ingest_source",
     "list_inbox",
+    "read_inbox_file",
     "search_wiki",
+    "write_inbox_file",
 ]
