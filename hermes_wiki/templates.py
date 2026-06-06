@@ -120,6 +120,8 @@ def generate_schema_markdown(
 ) -> str:
     """Return the starter Schema Markdown for a wiki."""
 
+    from hermes_wiki.skills import render_skills_block
+
     clean_slug = _validate_slug(slug)
     created_at = _timestamp(created)
     clean_domain = _display_domain(domain)
@@ -186,6 +188,12 @@ def generate_schema_markdown(
             "  auto_link_kanban: false",
             "  page_line_limit: 200",
             "```",
+            "",
+            "## Skills",
+            "",
+            "Skill assignments tell agents which skill guides ingestion and writing for",
+            "this wiki. Change them with `hermes wiki skills set <kind> <skill>`.",
+            render_skills_block().strip("\n"),
             "",
             "## Monitors",
             "",
