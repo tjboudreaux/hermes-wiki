@@ -18,6 +18,9 @@ dependencies = [
 [project.scripts]
 hermes-wiki = "hermes_wiki_cli.cli:main"
 
+[project.entry-points."hermes_agent.plugins"]
+wiki = "adapters.hermes.cli_plugin"
+
 [dependency-groups]
 dev = [
   "pytest>=9.0.3",
