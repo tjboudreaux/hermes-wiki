@@ -26,10 +26,10 @@ from hermes_wiki.management import (
     switch_wiki,
 )
 from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors, sweep_external_source
-from hermes_wiki.skills import SkillsError, read_wiki_skills, set_wiki_skill
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
+from hermes_wiki.skills import SkillsError, read_wiki_skills, set_wiki_skill
 from hermes_wiki.tools import (
     WRITE_PERMISSION_DENIED,
     _check_wiki_write_mode,
