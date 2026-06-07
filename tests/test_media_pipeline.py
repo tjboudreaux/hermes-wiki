@@ -111,6 +111,7 @@ def test_large_media_keeps_local_original_outside_git(tmp_path: Path, monkeypatc
         "storage": "large",
         "keep_originals": "local",
         "original": result.raw_snapshot,
+        "artifacts": [],
     }
     # The manifest IS tracked.
     assert _git_tracked(wiki_root, f"derived/audio/{stem}/manifest.json")

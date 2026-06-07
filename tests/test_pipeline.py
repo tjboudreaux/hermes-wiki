@@ -665,7 +665,9 @@ def test_single_source_ingest_rolls_back_on_processor_failure(tmp_path: Path) ->
     first_head = _git(wiki_root, "rev-parse", "HEAD").stdout.strip()
 
     class ExplodingProcessor(pipeline.DefaultProcessor):
-        def process(self, request: pipeline.ProcessRequest) -> list[pipeline.GeneratedPage]:
+        def process(
+            self, request: pipeline.ProcessRequest
+        ) -> list[pipeline.GeneratedPage | pipeline.DerivedArtifact]:
             pages = super().process(request)
             assert pages
             raise pipeline.ProcessorError("boom after planning")
