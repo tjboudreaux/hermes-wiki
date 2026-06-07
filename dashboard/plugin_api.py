@@ -268,31 +268,37 @@ async def ingest(
     """Ingest a source path/URL, uploaded file, or explicit inbox batch."""
 
     _require_write(slug)
-    payload = payload or await _payload_from_request(request)
-    if payload.inbox and payload.path_or_url:
-        raise _bad_request("ingest accepts either path_or_url or inbox, not both")
-    if payload.inbox:
+    upload_temp: Path | None = None
+    if payload is None:
+        payload, upload_temp = await _payload_from_request(request)
+    try:
+        if payload.inbox and payload.path_or_url:
+            raise _bad_request("ingest accepts either path_or_url or inbox, not both")
+        if payload.inbox:
+            try:
+                results = ingest_inbox(wiki=slug)
+            except IngestError as exc:
+                raise _bad_request(str(exc)) from exc
+            return {
+                "wiki": slug,
+                "status": "ok",
+                "results": [_ingest_row(result) for result in results],
+            }
+        if not payload.path_or_url:
+            raise _bad_request("ingest requires path_or_url or inbox=true")
         try:
-            results = ingest_inbox(wiki=slug)
+            result = ingest_source(
+                payload.path_or_url,
+                wiki=slug,
+                classifier=payload.classifier,
+                author_kind="human",
+            )
         except IngestError as exc:
             raise _bad_request(str(exc)) from exc
-        return {
-            "wiki": slug,
-            "status": "ok",
-            "results": [_ingest_row(result) for result in results],
-        }
-    if not payload.path_or_url:
-        raise _bad_request("ingest requires path_or_url or inbox=true")
-    try:
-        result = ingest_source(
-            payload.path_or_url,
-            wiki=slug,
-            classifier=payload.classifier,
-            author_kind="human",
-        )
-    except IngestError as exc:
-        raise _bad_request(str(exc)) from exc
-    return {"wiki": slug, "status": "ok", "result": _ingest_row(result)}
+        return {"wiki": slug, "status": "ok", "result": _ingest_row(result)}
+    finally:
+        if upload_temp is not None:
+            upload_temp.unlink(missing_ok=True)
 
 
 @router.get("/wikis/{slug}/inbox")
@@ -681,18 +687,20 @@ def _ingest_row(result: Any) -> dict[str, Any]:
     }
 
 
-async def _payload_from_request(request: Request | None) -> IngestRequest:
+async def _payload_from_request(request: Request | None) -> tuple[IngestRequest, Path | None]:
+    """Build the ingest payload; the second item is an upload temp file to clean up."""
+
     if request is None:
-        return IngestRequest()
+        return IngestRequest(), None
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         classifier = _form_text(form, "classifier")
         if _form_text(form, "inbox") in {"1", "true", "yes"}:
-            return IngestRequest(inbox=True, classifier=classifier)
+            return IngestRequest(inbox=True, classifier=classifier), None
         path_or_url = _form_text(form, "path_or_url") or _form_text(form, "url")
         if path_or_url:
-            return IngestRequest(path_or_url=path_or_url, classifier=classifier)
+            return IngestRequest(path_or_url=path_or_url, classifier=classifier), None
         for value in form.values():
             filename = getattr(value, "filename", None)
             read = getattr(value, "read", None)
@@ -700,12 +708,15 @@ async def _payload_from_request(request: Request | None) -> IngestRequest:
                 suffix = Path(str(filename)).suffix or ".txt"
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
                     handle.write(await read())
-                    return IngestRequest(path_or_url=handle.name, classifier=classifier)
+                    return (
+                        IngestRequest(path_or_url=handle.name, classifier=classifier),
+                        Path(handle.name),
+                    )
     if content_type.startswith("application/json"):
         raw = await request.json()
         if isinstance(raw, Mapping):
-            return IngestRequest.model_validate(raw)
-    return IngestRequest()
+            return IngestRequest.model_validate(raw), None
+    return IngestRequest(), None
 
 
 def _form_text(form: Mapping[str, Any], key: str) -> str | None:
