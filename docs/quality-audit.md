@@ -250,7 +250,10 @@ Two plausible-sounding claims about Hermes Agent internals were **refuted** duri
 
 Any work touching the adapter surface (`adapters/hermes/`) should be verified against the live `hermes-agent` source, not docs-derived assumptions.
 
-A related risk: if a Hermes session activates both the upstream bundled `llm-wiki` skill and this plugin's per-wiki skills, agents receive conflicting guidance (e.g., upstream's `^[raw/...]` provenance markers vs. this wiki's "standard relative Markdown links only" body convention). Skill precedence/collision behavior must be verified against live source — tracked as a "Now" roadmap item.
+**Skill precedence — verified against hermes-agent 0.16.0 source (2026-06-07).** There is no *name* collision risk: plugin-registered skills live in a separate registry with qualified names (`wiki:<name>`, `hermes_cli/plugins.py:957-1000`), while bundled skills are seeded to `~/.hermes/skills/` and tracked via `.bundled_manifest`. The real risk is an **attention asymmetry**: bundled/local skills appear in the system prompt's `<available_skills>` block and as slash commands (implicit activation), whereas plugin skills are **explicit-load only** (`skill_view("wiki:wiki-writing")`) and never appear in the system prompt (`tools/skills_tool.py:851-897`, `agent/prompt_builder.py:1254-1330`). Consequences:
+
+1. If the bundled `research-llm-wiki` skill is present in a user's `~/.hermes/skills/`, its guidance (including the `^[...]` provenance-marker syntax this wiki rejects) activates *by default*, while this plugin's per-wiki skills require an explicit load. Upstream guidance wins unless mitigated.
+2. Mitigations: users can disable the bundled skill via `skills.disabled: [research-llm-wiki]` in Hermes `config.yaml` (`tools/skills_tool.py:546-566`); and the wiki prompt injection should instruct agents to load the wiki's *assigned* skills (`wiki:wiki-writing`/`wiki:wiki-ingestion` per SCHEMA.md) before writing — a small `prompt.py` enhancement, added to the roadmap as **F9**.
 
 ---
 
@@ -266,6 +269,7 @@ A related risk: if a Hermes session activates both the upstream bundled `llm-wik
 | **F6** | **Health trendline + graph metrics surface** — persist health-score history, surface trendline + `graph.py` metrics in the dashboard health card and a CLI report | Structural | Medium | S/M | Addresses SI-1/SI-2/SI-3; storage already exists |
 | **F7** | **Capture BM25 retrieval baseline** — land relevance fixtures + `eval retrieval` and snapshot current numbers before any ranker change | Retrieval | High | S | Addresses RQ-1; cheap insurance for the SPEC's embedding extension point |
 | **F8** | **Contradiction detection assist** — flag when a new page's claims contradict an existing cited page (heuristics first, LLM-judge later) | Content | Medium | L | Sequence after F1 + judge evals prove the gap with data |
+| **F9** | **Prompt injection loads assigned wiki skills** — extend `prompt.py` so the Available Wikis block instructs agents to `skill_view` the wiki's SCHEMA.md-assigned `wiki:*` skills before writing | Content | High | S | Counters the bundled-skill attention asymmetry (see Integration cautions): plugin skills are explicit-load only and otherwise lose to implicit upstream guidance |
 
 **Ordering rationale**: per Anthropic's evals-before-docs loop (see Prior Art), write the eval corpus cases for the F1 behaviors (dedup, contradiction, faithfulness — 3+ scenarios each) first or together with the F1 prose, so the skill is authored against measurable targets. Then F7 (baselines before behavior changes), then F2–F6 in leverage order. F1 remains the highest-ROI item — and is now mostly a porting job from upstream v2.1.0 rather than original authoring.
 
@@ -293,7 +297,8 @@ A related risk: if a Hermes session activates both the upstream bundled `llm-wik
 | Item | Dimension | Effort | Depends on |
 |---|---|---|---|
 | F1 — Skill synthesis/dedup/contradiction protocol | Content | S | — |
-| Verify skill precedence/collision vs upstream bundled `llm-wiki` skill (against live `hermes-agent` source, not docs) | Content | S | — |
+| ~~Verify skill precedence/collision vs upstream bundled `llm-wiki` skill~~ ✅ verified 2026-06-07 — see Integration cautions; spawned F9 | Content | S | — |
+| F9 — Prompt injection loads assigned wiki skills (`prompt.py`: instruct agents to `skill_view` the SCHEMA.md-assigned `wiki:*` skills before writing) | Content | S | — |
 | Eval scaffold (`evals/` layout, markers, `hermes-wiki eval`, structural eval) | Test/Content | M | — |
 | F7 — BM25 retrieval baseline + `eval retrieval` | Retrieval | S | Eval scaffold |
 | T1 — Coverage reporting + floor | Test | S | — |
