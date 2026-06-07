@@ -30,6 +30,7 @@ With Hermes Wiki:
 | [Dashboard](dashboard.md) | Web UI setup and views |
 | [Karpathy Pattern](karpathy-pattern.md) | How Hermes Wiki implements the LLM Wiki concept |
 | [Quality Audit](quality-audit.md) | Audit findings and roadmap for evals, features, and test suites |
+| [Media Ingestion Design](media-ingestion-design.md) | Decision record and build plan for multimodal ingestion |
 
 ## The Pattern
 

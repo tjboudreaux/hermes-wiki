@@ -123,6 +123,12 @@ Resolved: Hermes adopts the Karpathy Pattern conceptually. Hermes keeps standard
 **Wiki content vs database state**:
 Resolved: Raw Sources and Wiki Pages are authoritative. Database-backed views are Projections; if a Projection disagrees with Wiki content, the Projection is repaired or rebuilt, with Projection Version history preserved for triage.
 
+**Deterministic core vs media extraction**:
+Resolved (2026-06-07, media design): the core pipeline is deterministic *or version-stamped extraction*. Mechanical extraction (PDF parsing, ASR, scene detection) may run model-based tools inside trusted processors when tool + version + model identity are stamped into a derived-artifact manifest; interpretation (captions, synthesis) is always attributed to a model identity and stays agent-side or routes through the host's auxiliary vision router. See `docs/media-ingestion-design.md` (D1).
+
+**Raw evidence vs large media**:
+Resolved (2026-06-07, media design): for media above `MAX_INGEST_BYTES`, provenance consciously degrades from bytes-in-git to fingerprint-in-git — the original is kept on disk (gitignored) with its sha256 pinned in the derived manifest, and the git-tracked derived artifacts are the durable evidence. See `docs/media-ingestion-design.md` (D4).
+
 **Search Projection strategy**:
 Resolved: Phase 1 search preserves technical terms and normalized identifiers rather than applying Porter stemming by default.
 
