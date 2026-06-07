@@ -29,6 +29,7 @@ With Hermes Wiki:
 | [Hooks Architecture](hooks-architecture.md) | Per-wiki executable customization design |
 | [Dashboard](dashboard.md) | Web UI setup and views |
 | [Karpathy Pattern](karpathy-pattern.md) | How Hermes Wiki implements the LLM Wiki concept |
+| [Quality Audit](quality-audit.md) | Audit findings and roadmap for evals, features, and test suites |
 
 ## The Pattern
 
