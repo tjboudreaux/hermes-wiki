@@ -33,8 +33,12 @@ dev = [
 packages = ["hermes_wiki", "hermes_wiki_cli", "adapters", "fixtures"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
-testpaths = ["tests"]
+addopts = "-ra -m 'not eval and not eval_llm'"
+testpaths = ["tests", "evals"]
+markers = [
+  "eval: deterministic quality evals (structural, retrieval, graph); run with -m eval",
+  "eval_llm: LLM-judge content evals; scheduled runs only, requires judge API key",
+]
 
 [tool.ruff]
 line-length = 100
@@ -63,6 +67,7 @@ include = [
   "hermes_wiki",
   "hermes_wiki_cli",
   "adapters",
+  "evals",
   "fixtures",
   "tests",
 ]

@@ -317,6 +317,7 @@ def _page_content_findings(
     findings: list[dict[str, Any]] = []
     existing_files = {page["path"].resolve() for page in pages}
     link_counts = {page["id"]: 0 for page in pages if page["id"]}
+    resolved_root = wiki_root.resolve()
     for page in pages:
         for target in _markdown_links(page["body"]):
             if _is_external_or_anchor(target):
@@ -328,7 +329,7 @@ def _page_content_findings(
             # inside the wiki root, so do not flag links to them as broken/orphaned.
             if resolved_target not in existing_files and resolved_target.is_file():
                 try:
-                    resolved_target.relative_to(wiki_root.resolve())
+                    resolved_target.relative_to(resolved_root)
                 except ValueError:
                     pass
                 else:
@@ -345,7 +346,7 @@ def _page_content_findings(
                     )
                 )
                 continue
-            target_id = resolved_target.relative_to(wiki_root).with_suffix("").as_posix()
+            target_id = resolved_target.relative_to(resolved_root).with_suffix("").as_posix()
             link_counts[target_id] = link_counts.get(target_id, 0) + 1
 
     for page in pages:

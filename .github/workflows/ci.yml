@@ -36,6 +36,9 @@ jobs:
       - name: Test
         run: uv run pytest
 
+      - name: Quality evals (deterministic)
+        run: uv run pytest -m eval
+
   dashboard:
     runs-on: ubuntu-latest
     steps:

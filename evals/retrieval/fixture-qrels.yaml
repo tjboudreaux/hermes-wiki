@@ -1,0 +1,28 @@
+# Qrels for the clean populated fixture home (fixtures/factory.build_clean_home).
+# Page ids are fixed by fixtures/seed_data.py, so judgments can be exact.
+queries:
+  - q: "agent memory"
+    relevant:
+      - concepts/agent-memory
+      - sources/2026-06-05-agent-memory-article
+  - q: "getCwd"          # identifier-normalization regression case (camelCase)
+    relevant:
+      - concepts/agent-memory
+  - q: "get cwd"         # split-form variant must match the same page
+    relevant:
+      - concepts/agent-memory
+  - q: "hermes"
+    relevant:
+      - entities/hermes
+  - q: "scratchpad"
+    relevant:
+      - comparisons/memory-vs-scratchpad
+  - q: "workshop"
+    relevant:
+      - sources/2026-06-05-memory-workshop-transcript
+  - q: "operations"
+    relevant:
+      - summaries/agent-operations
+  - q: "memory tradeoffs"
+    relevant:
+      - comparisons/memory-vs-scratchpad

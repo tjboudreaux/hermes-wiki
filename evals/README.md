@@ -12,18 +12,37 @@ concrete targets rather than imagined ones.
 
 ```
 evals/
-  skills/                  # skill-behavior scenario cases (this drop)
+  skills/                  # skill-behavior scenario cases
     dedup.cases.json           # page-creation threshold / no near-duplicates
     contradiction.cases.json   # date-aware supersession, contested flagging
     faithfulness.cases.json    # claims traceable to cited sources
-  corpus/                  # input sources the cases reference
-    dedup-threshold/sources/
-    multi-source-contradiction/sources/
+  corpus/                  # golden-corpus cases
+    <case>/sources/            # input sources (deterministic, no network)
+    <case>/expected_structure.yaml   # structure contract for the current path
+    <case>/relevance.yaml            # qrels for the corpus wiki
+  retrieval/
+    fixture-qrels.yaml     # qrels for the seeded clean fixture home
+  harness/                 # case loading, wiki building, scoring, storage
+    runner.py              # dev entry point (capture-baseline / retrieval / suite)
+  results/
+    bm25-baseline.jsonl    # committed retrieval baseline (floors for CI)
+  test_structural_evals.py # @pytest.mark.eval — golden structure contracts
+  test_retrieval_evals.py  # @pytest.mark.eval — qrels vs committed baseline
+  test_graph_evals.py      # @pytest.mark.eval — link-graph health
 ```
 
-The harness (`harness/`, `rubrics/`, `results/`, the `hermes-wiki eval` CLI,
-and pytest `eval`/`eval_llm` markers) lands with the "eval scaffold" roadmap
-item — see the audit's Eval Harness Architecture section for the full design.
+## Running
+
+```bash
+uv run pytest -m eval                                  # deterministic suite (CI-gated)
+uv run python -m evals.harness.runner retrieval        # full per-query report
+uv run python -m evals.harness.runner capture-baseline # refresh committed floors
+```
+
+The default `pytest` run deselects `eval`/`eval_llm` markers so the fast suite
+stays fast. Refresh the baseline only when a ranking change is intentional —
+the diff to `results/bm25-baseline.jsonl` is the review surface. LLM-judge
+content evals (`rubrics/`, `@pytest.mark.eval_llm`) are a later roadmap item.
 
 ## Case format
 

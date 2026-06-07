@@ -1,0 +1,9 @@
+# Qrels for the multi-source-contradiction corpus wiki (undated ids only).
+queries:
+  - q: "BM25"
+    relevant:
+      - concepts/memory-retrieval-benchmark-results-2025-09
+      - concepts/memory-retrieval-benchmark-update-2026-04
+  - q: "hybrid retrieval"
+    relevant:
+      - concepts/memory-retrieval-benchmark-update-2026-04

@@ -1,5 +1,7 @@
 # Survey of Modular Memory Architectures
 
+Published: 2026-03-02
+
 Modular memory separates an agent's knowledge into independently updatable
 stores, each with its own retrieval policy. This survey examines how modular
 memory architectures trade retrieval latency against synthesis quality.

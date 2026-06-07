@@ -209,9 +209,9 @@ Rollout: non-blocking CI report first; once the embedding ranker work begins, ga
 
 ### CLI, pytest, and CI integration
 
-- **CLI**: add an `eval` subcommand to `hermes_wiki_cli/cli.py` (alongside `lint`) with verbs `structural | retrieval | graph | content [--live|--replay] [--dry-run] | report`, routing into `evals/harness/runner.py`.
-- **pytest**: register `eval` and `eval_llm` markers in `pyproject.toml`; exclude both from the default run (`addopts = "-ra -m 'not eval and not eval_llm'"`) so the fast suite stays fast.
-- **CI**: add a `pytest -m eval` job to `ci.yml` (deterministic — safe to gate). Add `.github/workflows/evals.yml` on `schedule` (weekly) + `workflow_dispatch` running `pytest -m eval_llm` with the judge API key as a secret, writing results to the job summary and `results/`. Judge evals never block PRs.
+- **Runner** *(shipped as `python -m evals.harness.runner` rather than a `hermes-wiki eval` CLI verb — the suite needs a repo checkout + dev deps, so a shipped CLI verb would dangle for installed users)*: verbs `capture-baseline | retrieval | suite`; LLM-judge verbs (`content [--live|--replay] [--dry-run]`) land with the judge phase.
+- **pytest** *(shipped)*: `eval` and `eval_llm` markers registered in `pyproject.toml`; both excluded from the default run (`addopts = "-ra -m 'not eval and not eval_llm'"`) so the fast suite stays fast.
+- **CI** *(eval step shipped)*: `pytest -m eval` runs in the main test job (deterministic — gated). Still to come: `.github/workflows/evals.yml` on `schedule` (weekly) + `workflow_dispatch` running `pytest -m eval_llm` with the judge API key as a secret, writing results to the job summary and `results/`. Judge evals never block PRs.
 
 ---
 
