@@ -73,7 +73,7 @@ uv run hermes-wiki search "attention mechanism" --wiki ai-tooling --limit 5
 uv run hermes-wiki lint --wiki ai-tooling
 ```
 
-This runs 18 automated checks for broken links, orphan pages, stale content, and more.
+This runs 19 automated checks for broken links, orphan pages, stale content, and more.
 
 ## Start the Dashboard
 

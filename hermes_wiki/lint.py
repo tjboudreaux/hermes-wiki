@@ -372,6 +372,19 @@ def _page_content_findings(
                     path=page["rel_path"],
                 )
             )
+        for citation in _string_list(page["metadata"].get("sources")):
+            if _citation_resolves(resolved_root, citation, link_counts):
+                continue
+            findings.append(
+                _finding(
+                    "unresolved_citation",
+                    "high",
+                    f"page {page['id']} cites unresolved source {citation}",
+                    page_id=page["id"],
+                    path=page["rel_path"],
+                    citation=citation,
+                )
+            )
         stale_marker = _stale_unverified_marker(page["body"])
         if stale_marker is not None:
             findings.append(
@@ -809,6 +822,34 @@ def _is_external_or_anchor(target: str) -> bool:
 def _has_factual_body(body: str) -> bool:
     text = re.sub(r"^#.*$", "", body, flags=re.MULTILINE).strip()
     return bool(re.search(r"[A-Za-z]{3,}", text))
+
+
+def _citation_resolves(
+    resolved_root: Path,
+    citation: Any,
+    page_ids: dict[str, int] | set[str],
+) -> bool:
+    """True when a ``sources:`` entry points at a real page or wiki-local file.
+
+    External URLs are provenance recorded elsewhere (``sources`` table), not
+    local references, so they are out of scope for this check.
+    """
+
+    target = str(citation).strip()
+    if not target:
+        return False
+    if re.match(r"^[a-z][a-z0-9+.-]*://", target):
+        return True
+    if target in page_ids:
+        return True
+    candidate = (resolved_root / target).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
+        return False
+    if candidate.is_file():
+        return True
+    return candidate.suffix == "" and candidate.with_suffix(".md").is_file()
 
 
 def _stale_unverified_marker(body: str) -> str | None:

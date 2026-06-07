@@ -65,7 +65,7 @@ Periodic health check for contradictions, stale claims, orphan pages, missing cr
 | Log | `log.md` — append-only attributed action record |
 | Ingest operation | `hermes-wiki ingest` — pluggable classify → process → propagate → commit pipeline |
 | Query operation | `hermes-wiki search` / `wiki_search` tool — BM25 FTS5 ranked results |
-| Lint operation | `hermes-wiki lint` — 18 automated health checks |
+| Lint operation | `hermes-wiki lint` — 19 automated health checks |
 | Knowledge compounds | Propagation rules update related pages on every ingest |
 | Human curates sources | Humans drop sources in `raw/inbox/`; agents do the rest |
 

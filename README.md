@@ -70,7 +70,7 @@ Hermes Wiki makes this operational with a CLI, agent tools, and a web dashboard.
 | **Dashboard** | React 19 plugin tab in the Hermes dashboard with search, inbox, health, and activity views |
 | **Attribution** | Every change is attributed (agent/profile/human/cron) with triple redundancy: frontmatter + SQLite + git |
 | **Privacy** | Profile-scoped visibility with whitelist/blacklist — invisible wikis never leak their names |
-| **Health & Lint** | 18 automated checks: broken links, orphans, stale content, projection drift, untrusted plugins |
+| **Health & Lint** | 19 automated checks: broken links, orphans, stale content, projection drift, untrusted plugins |
 | **Kanban Linkage** | Bidirectional wiki-page ↔ kanban-task references (wiki-owned, read-only to kanban) |
 | **Pluggable Pipeline** | Custom classifiers and processors per wiki, with explicit trust-before-execute security |
 | **Git-Backed** | Each wiki is its own git repository; projection DBs are rebuildable from markdown |
@@ -258,7 +258,7 @@ uv run python -m hermes_wiki.harness --repo-root "$(pwd)" dashboard start --port
 | Log | `log.md` — append-only attributed action record |
 | Ingest operation | `hermes-wiki ingest` — classifies, processes, cross-links, commits |
 | Query operation | `hermes-wiki search` / `wiki_search` tool — BM25 FTS5 ranked |
-| Lint operation | `hermes-wiki lint` — 18 health checks for contradictions, staleness, orphans |
+| Lint operation | `hermes-wiki lint` — 19 health checks for contradictions, staleness, orphans |
 | Knowledge compounds | Each ingest updates related pages, not just the new source's page |
 | Human curates sources, LLM does the rest | Agents ingest, synthesize, cross-link; humans drop sources in inbox |
 
@@ -289,7 +289,7 @@ tests/              Behavioral test suite
 - **Full attribution** — every change tracked to agent, profile, human, or cron job
 - **Privacy by default** — invisible wikis never leak their names
 - **Standalone-first** — runs without Hermes installed; adapters wire into real deployments
-- **18 health checks** — automated lint catches broken links, stale content, orphan pages
+- **19 health checks** — automated lint catches broken links, stale content, orphan pages
 
 ## FAQ
 

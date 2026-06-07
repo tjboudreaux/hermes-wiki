@@ -632,6 +632,7 @@ The wiki does **not** own the kanban plugin and never mutates its schema or tabl
 | Orphan pages (no inbound links) | ⚠️ medium |
 | Broken relative links | 🔴 high |
 | Missing citations on factual claims | 🔴 high |
+| Unresolved citations (`sources:` entry matches no page or wiki-local file) | 🔴 high |
 | `[unverified]` flags older than 14 days | ⚠️ medium |
 | Page not in `index.md` | ⚠️ medium |
 | Page over 200 lines | 💡 low |

@@ -1,0 +1,60 @@
+classified_as: paper
+raw_snapshot: raw/papers/<DATE>-v1-agent-systems-paper.pdf
+
+--- page: sources/<DATE>-agent-systems-paper ---
+---
+id: sources/<DATE>-agent-systems-paper
+title: Agent Systems Paper
+type: source
+created: '<TS>'
+updated: '<TS>'
+tags:
+- ingest
+- paper
+sources:
+- raw/papers/<DATE>-v1-agent-systems-paper.pdf
+confidence: high
+contested: false
+author: golden-tester
+author_kind: human
+links: []
+inbound_links: 0
+---
+
+# Agent Systems Paper
+
+Curated summary of the immutable Source Snapshot.
+
+- Classification: `paper` (high)
+- Raw evidence: [Source Snapshot](../raw/papers/<DATE>-v1-agent-systems-paper.pdf)
+
+%PDF-1.7 Fixture Paper: Evaluation of Persistent Memory in Coding Agents DOI: 10.5555/hermes.fixture.2026.001 Abstract We evaluate persistent memory systems for coding agents.
+
+--- page: entities/agent-systems-paper ---
+---
+id: entities/agent-systems-paper
+title: Agent Systems Paper
+type: entity
+created: '<TS>'
+updated: '<TS>'
+tags:
+- ingest
+- paper
+sources:
+- raw/papers/<DATE>-v1-agent-systems-paper.pdf
+confidence: high
+contested: false
+author: golden-tester
+author_kind: human
+links:
+- sources/<DATE>-agent-systems-paper
+inbound_links: 0
+---
+
+# Agent Systems Paper
+
+Agent Systems Paper is a derived Wiki Page from an ingested paper Source Snapshot.
+It is grounded in [the Source Page](../sources/<DATE>-agent-systems-paper.md).
+
+%PDF-1.7 Fixture Paper: Evaluation of Persistent Memory in Coding Agents DOI: 10.5555/hermes.fixture.2026.001 Abstract We evaluate persistent memory systems for coding agents.
+

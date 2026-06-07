@@ -1,0 +1,60 @@
+classified_as: unknown
+raw_snapshot: raw/unknown/<DATE>-v1-unknown-sample.dat
+
+--- page: sources/<DATE>-unknown-sample ---
+---
+id: sources/<DATE>-unknown-sample
+title: Unknown Sample
+type: source
+created: '<TS>'
+updated: '<TS>'
+tags:
+- ingest
+- unknown
+sources:
+- raw/unknown/<DATE>-v1-unknown-sample.dat
+confidence: low
+contested: false
+author: golden-tester
+author_kind: human
+links: []
+inbound_links: 0
+---
+
+# Unknown Sample
+
+Curated summary of the immutable Source Snapshot.
+
+- Classification: `unknown` (low)
+- Raw evidence: [Source Snapshot](../raw/unknown/<DATE>-v1-unknown-sample.dat)
+
+???
+
+--- page: concepts/unknown-sample ---
+---
+id: concepts/unknown-sample
+title: Unknown Sample
+type: concept
+created: '<TS>'
+updated: '<TS>'
+tags:
+- ingest
+- unknown
+sources:
+- raw/unknown/<DATE>-v1-unknown-sample.dat
+confidence: low
+contested: false
+author: golden-tester
+author_kind: human
+links:
+- sources/<DATE>-unknown-sample
+inbound_links: 0
+---
+
+# Unknown Sample
+
+Unknown Sample is a derived Wiki Page from an ingested unknown Source Snapshot.
+It is grounded in [the Source Page](../sources/<DATE>-unknown-sample.md).
+
+???
+

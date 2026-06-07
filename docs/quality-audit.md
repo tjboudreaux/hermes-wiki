@@ -296,14 +296,14 @@ Any work touching the adapter surface (`adapters/hermes/`) should be verified ag
 
 | Item | Dimension | Effort | Depends on |
 |---|---|---|---|
-| F1 — Skill synthesis/dedup/contradiction protocol | Content | S | — |
-| ~~Verify skill precedence/collision vs upstream bundled `llm-wiki` skill~~ ✅ verified 2026-06-07 — see Integration cautions; spawned F9 | Content | S | — |
+| ✅ F1 — Skill synthesis/dedup/contradiction protocol (skills v1.1.0, 2026-06-07) | Content | S | — |
+| ✅ Verify skill precedence vs upstream bundled `llm-wiki` skill (2026-06-07 — see Integration cautions; spawned F9) | Content | S | — |
 | F9 — Prompt injection loads assigned wiki skills (`prompt.py`: instruct agents to `skill_view` the SCHEMA.md-assigned `wiki:*` skills before writing) | Content | S | — |
-| Eval scaffold (`evals/` layout, markers, `hermes-wiki eval`, structural eval) | Test/Content | M | — |
-| F7 — BM25 retrieval baseline + `eval retrieval` | Retrieval | S | Eval scaffold |
-| T1 — Coverage reporting + floor | Test | S | — |
-| T2 — Golden snapshots of `DefaultProcessor` output | Test/Content | S | — |
-| F4 — Citation-verification lint check | Content/Structural | S | — |
+| ✅ Eval scaffold (`evals/` harness, markers, runner, structural eval; CI-gated 2026-06-07) | Test/Content | M | — |
+| ✅ F7 — BM25 retrieval baseline (`evals/results/bm25-baseline.jsonl`, 2026-06-07) | Retrieval | S | Eval scaffold |
+| ✅ T1 — Coverage floor 84% in CI (observed 86%, 2026-06-07) | Test | S | — |
+| ✅ T2 — Golden snapshots of `DefaultProcessor` output (`tests/golden/`, 2026-06-07) | Test/Content | S | — |
+| ✅ F4 — `unresolved_citation` lint check (19th check, 2026-06-07) | Content/Structural | S | — |
 
 ### Next
 

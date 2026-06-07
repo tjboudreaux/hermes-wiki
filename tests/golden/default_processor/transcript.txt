@@ -1,0 +1,60 @@
+classified_as: transcript
+raw_snapshot: raw/transcripts/<DATE>-v1-memory-workshop-transcript.txt
+
+--- page: sources/<DATE>-memory-workshop-transcript ---
+---
+id: sources/<DATE>-memory-workshop-transcript
+title: Memory Workshop Transcript
+type: source
+created: '<TS>'
+updated: '<TS>'
+tags:
+- ingest
+- transcript
+sources:
+- raw/transcripts/<DATE>-v1-memory-workshop-transcript.txt
+confidence: high
+contested: false
+author: golden-tester
+author_kind: human
+links: []
+inbound_links: 0
+---
+
+# Memory Workshop Transcript
+
+Curated summary of the immutable Source Snapshot.
+
+- Classification: `transcript` (high)
+- Raw evidence: [Source Snapshot](../raw/transcripts/<DATE>-v1-memory-workshop-transcript.txt)
+
+Speaker 1: Welcome to the Hermes Wiki memory workshop.
+
+--- page: concepts/memory-workshop-transcript ---
+---
+id: concepts/memory-workshop-transcript
+title: Memory Workshop Transcript
+type: concept
+created: '<TS>'
+updated: '<TS>'
+tags:
+- ingest
+- transcript
+sources:
+- raw/transcripts/<DATE>-v1-memory-workshop-transcript.txt
+confidence: high
+contested: false
+author: golden-tester
+author_kind: human
+links:
+- sources/<DATE>-memory-workshop-transcript
+inbound_links: 0
+---
+
+# Memory Workshop Transcript
+
+Memory Workshop Transcript is a derived Wiki Page from an ingested transcript Source Snapshot.
+It is grounded in [the Source Page](../sources/<DATE>-memory-workshop-transcript.md).
+
+Speaker 1: Welcome to the Hermes Wiki memory workshop.
+
