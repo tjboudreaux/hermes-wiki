@@ -15,6 +15,9 @@ dependencies = [
   "PyYAML>=6.0.0",
 ]
 
+[project.optional-dependencies]
+pdf = ["pdfplumber>=0.11.9,<0.12"]
+
 [project.scripts]
 hermes-wiki = "hermes_wiki_cli.cli:main"
 
@@ -28,6 +31,7 @@ dev = [
   "ty==0.0.44",
   "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@main",
   "pytest-cov>=7.1.0",
+  "pdfplumber>=0.11.9,<0.12",
 ]
 
 [tool.hatch.build.targets.wheel]

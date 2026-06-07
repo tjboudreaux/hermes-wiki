@@ -36,6 +36,15 @@ DEFAULT_KEEP_ORIGINALS = "local"
 
 MANIFEST_FILENAME = "manifest.json"
 
+#: Label -> derived-directory modality mapping (labels not listed map to themselves).
+_DERIVED_MODALITIES = {"paper": "pdf"}
+
+
+def derived_modality(label: str) -> str:
+    """Resolve the ``derived/<modality>/`` directory name for a label."""
+
+    return _DERIVED_MODALITIES.get(label, label)
+
 _STREAM_CHUNK = 1024 * 1024
 
 
@@ -198,6 +207,7 @@ __all__ = [
     "DerivedManifest",
     "MediaRequirement",
     "copy_stream",
+    "derived_modality",
     "derived_root",
     "keep_originals_mode",
     "missing_dependencies",

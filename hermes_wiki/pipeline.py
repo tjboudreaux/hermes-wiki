@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -102,6 +102,24 @@ class GeneratedPage:
 
 
 @dataclass(frozen=True, slots=True)
+class DerivedArtifact:
+    """A derived-extraction file planned by a processor (design D2).
+
+    Written under ``derived/<modality>/<source-stem>/<relpath>`` inside the
+    same transactional envelope as pages. ``tool``/``version``/``model_id``
+    stamp the artifact set's provenance manifest; ``details`` merge into the
+    manifest's details block.
+    """
+
+    relpath: str
+    content: str | bytes
+    tool: str
+    version: str
+    model_id: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class IngestResult:
     """Observable result of one ingest run."""
 
@@ -132,14 +150,14 @@ class _SourceVersionPlan:
 class Processor(Protocol):
     """Processor interface for turning one Source Snapshot into Wiki Pages."""
 
-    def process(self, request: ProcessRequest) -> list[GeneratedPage]:
-        """Return generated Wiki Pages."""
+    def process(self, request: ProcessRequest) -> list[GeneratedPage | DerivedArtifact]:
+        """Return generated Wiki Pages and optional derived artifacts."""
 
 
 class DefaultProcessor:
     """Default deterministic processor that creates Source + concept/entity pages."""
 
-    def process(self, request: ProcessRequest) -> list[GeneratedPage]:
+    def process(self, request: ProcessRequest) -> list[GeneratedPage | DerivedArtifact]:
         source_links = [
             page
             for page in request.existing_pages
@@ -180,7 +198,7 @@ class MediaStubProcessor:
     image, audio, video phases) replace this stub with real extraction.
     """
 
-    def process(self, request: ProcessRequest) -> list[GeneratedPage]:
+    def process(self, request: ProcessRequest) -> list[GeneratedPage | DerivedArtifact]:
         return [
             GeneratedPage(
                 WikiPage(
@@ -199,6 +217,12 @@ class MediaStubProcessor:
 def _builtin_processor_for_label(label_name: str) -> Processor:
     if label_name in media.MEDIA_LABELS:
         return MediaStubProcessor()
+    if label_name == "paper":
+        from hermes_wiki.media_processors import pdf_processor_or_none
+
+        processor = pdf_processor_or_none()
+        if processor is not None:
+            return processor
     return DefaultProcessor()
 
 
@@ -209,7 +233,7 @@ class CustomProcessor:
         self.name = name
         self.plugin_path = plugin_path
 
-    def process(self, request: ProcessRequest) -> list[GeneratedPage]:
+    def process(self, request: ProcessRequest) -> list[GeneratedPage | DerivedArtifact]:
         module = _load_processor_module(self.name, self.plugin_path)
         process = getattr(module, "process", None)
         if not callable(process):
@@ -710,8 +734,8 @@ def _ingest_source_content_locked(
     source_page_id = _unique_page_id(wiki_root, f"sources/{today}-{source_slug}")
     source_stem = source_page_id.split("/")[-1]
     manifest_relpath = (
-        f"derived/{label.name}/{source_stem}/{media.MANIFEST_FILENAME}"
-        if label.name in media.MEDIA_LABELS
+        f"derived/{media.derived_modality(label.name)}/{source_stem}/{media.MANIFEST_FILENAME}"
+        if label.name in media.MEDIA_LABELS or label.name == "paper"
         else ""
     )
     request = ProcessRequest(
@@ -736,7 +760,9 @@ def _ingest_source_content_locked(
     )
 
     try:
-        planned_pages = selected_processor.process(request)
+        planned_items = selected_processor.process(request)
+        planned_pages = [item for item in planned_items if isinstance(item, GeneratedPage)]
+        planned_artifacts = [item for item in planned_items if isinstance(item, DerivedArtifact)]
         if not planned_pages:
             raise ProcessorError("processor produced no pages")
         return _materialize_ingest(
@@ -746,6 +772,7 @@ def _ingest_source_content_locked(
             label=label,
             request=request,
             planned_pages=planned_pages,
+            planned_artifacts=planned_artifacts,
             digest=digest,
             now=now,
             author=author,
@@ -979,6 +1006,7 @@ def _materialize_ingest(
     label: ClassLabel,
     request: ProcessRequest,
     planned_pages: list[GeneratedPage],
+    planned_artifacts: list[DerivedArtifact],
     digest: str,
     now: str,
     author: str,
@@ -1012,21 +1040,40 @@ def _materialize_ingest(
             git_ops.ensure_gitignore(wiki_root)
         else:
             raw_path.write_bytes(source.content)
-        if request.manifest_relpath:
+        if request.manifest_relpath and (label.name in media.MEDIA_LABELS or planned_artifacts):
             manifest_path = wiki_root / request.manifest_relpath
             _remember(touched, manifest_path)
+            artifact_dir = manifest_path.parent
+            for artifact in planned_artifacts:
+                artifact_path = (artifact_dir / artifact.relpath).resolve()
+                try:
+                    artifact_path.relative_to(artifact_dir.resolve())
+                except ValueError as exc:
+                    raise ProcessorError(
+                        f"derived artifact escapes its directory: {artifact.relpath}"
+                    ) from exc
+                _remember(touched, artifact_path)
+                artifact_path.parent.mkdir(parents=True, exist_ok=True)
+                if isinstance(artifact.content, bytes):
+                    artifact_path.write_bytes(artifact.content)
+                else:
+                    artifact_path.write_text(artifact.content, encoding="utf-8")
+            stamp = planned_artifacts[0] if planned_artifacts else None
+            extra_details: dict[str, Any] = {}
+            for artifact in planned_artifacts:
+                extra_details.update(artifact.details)
             media.write_manifest(
-                manifest_path.parent,
+                artifact_dir,
                 media.DerivedManifest(
-                    tool="hermes-wiki.media-stub",
-                    version=media.package_version(),
+                    tool=stamp.tool if stamp else "hermes-wiki.media-stub",
+                    version=stamp.version if stamp else media.package_version(),
                     input_sha256=digest,
                     input_size=(
                         source.size if source.size is not None else len(source.content)
                     ),
                     source_ref=source.ref,
                     created=now,
-                    model_id=None,
+                    model_id=stamp.model_id if stamp else None,
                     details={
                         "label": label.name,
                         "storage": "large" if source.local_path is not None else "snapshot",
@@ -1036,6 +1083,10 @@ def _materialize_ingest(
                             if (source.local_path is not None and keep_originals == "none")
                             else request.snapshot_relpath
                         ),
+                        "artifacts": sorted(
+                            artifact.relpath for artifact in planned_artifacts
+                        ),
+                        **extra_details,
                     },
                 ),
             )
@@ -1234,8 +1285,8 @@ def _call_custom_processor(process: Any, request: ProcessRequest) -> Any:
         return process(raw_path, request.label)
 
 
-def _coerce_generated_page(item: Any) -> GeneratedPage:
-    if isinstance(item, GeneratedPage):
+def _coerce_generated_page(item: Any) -> GeneratedPage | DerivedArtifact:
+    if isinstance(item, (GeneratedPage, DerivedArtifact)):
         return item
     if isinstance(item, WikiPage):
         return GeneratedPage(item)

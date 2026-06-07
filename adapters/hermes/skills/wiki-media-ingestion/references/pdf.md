@@ -1,16 +1,26 @@
 # PDF Sources
 
-**Status**: extraction processor pending (design PR1 — license-filtered
-bake-off: docling / unstructured / pdfplumber; AGPL/GPL tools excluded).
+**Status**: live. PDFs classify as `paper`; with the `hermes-wiki[pdf]` extra
+installed, ingestion extracts text per page via pdfplumber (bake-off winner —
+see the media design doc).
 
-Until the processor lands, PDFs classify as `paper` and receive a stub source
-page. What you can do now:
+## What ingestion produces
 
-1. Read the PDF with your own tools and extend the source page with a faithful
-   summary per the `wiki:wiki-writing` protocol.
-2. Cite by page using the anchor convention so citations survive the processor
-   upgrade: `([source p.12](../derived/pdf/<source-stem>/extracted.md#page-12))`
-   once extraction exists; until then cite the source page itself.
+- `derived/pdf/<source-stem>/extracted.md` — full text with `## Page N`
+  headings (stable citation anchors).
+- `derived/pdf/<source-stem>/manifest.json` — provenance: tool, version,
+  input sha256, page count.
+- A source page summarizing the first page and linking every page anchor.
 
-When extraction lands, `derived/pdf/<source-stem>/extracted.md` will carry
-`## Page N` headings as stable citation anchors.
+Without the extra (or for unparseable PDFs), ingestion falls back to the
+default text processor — install the extra and re-ingest for real extraction.
+
+## Working with PDF evidence
+
+1. **Cite by page** so claims stay checkable:
+   `([source p.12](../derived/pdf/<source-stem>/extracted.md#page-12))`.
+2. **Synthesize from the extraction**, not from memory: read `extracted.md`,
+   then write concept/entity pages per the `wiki:wiki-writing` protocol.
+3. Extraction is text-layer only (no OCR). Scanned PDFs yield
+   `*(no extractable text)*` pages — read those visually with your own tools
+   and note that the description is your interpretation.

@@ -83,3 +83,25 @@ def test_media_corpus_ingest_plumbing(name: str, tmp_path: Path) -> None:
     snapshot = source_rows[0]["id"]
     assert (wiki_root / snapshot).exists()
     assert not snapshot.startswith("raw/large/")
+
+
+def test_pdf_extraction_matches_golden(tmp_path: Path) -> None:
+    """pdfplumber extraction over the corpus PDF is pinned to a golden (PR1)."""
+
+    home = tmp_path / "hermes-home"
+    slug = "pdf-eval"
+    wiki_builder.build_corpus_wiki(
+        home,
+        slug=slug,
+        domain="pdf extraction eval",
+        sources=[CORPUS / "sources" / "two-page.pdf"],
+    )
+    wiki_root = home / "wikis" / slug
+    derived = sorted((wiki_root / "derived" / "pdf").iterdir())
+    assert len(derived) == 1
+    actual = (derived[0] / "extracted.md").read_text(encoding="utf-8")
+    golden = (CORPUS / "golden" / "two-page.extracted.md").read_text(encoding="utf-8")
+    # Title line carries the ingest-derived name; the page content is pinned.
+    assert actual.splitlines()[2:] == golden.splitlines()[2:]
+    manifest = media.read_manifest(derived[0])
+    assert manifest is not None and manifest.tool == "pdfplumber"
