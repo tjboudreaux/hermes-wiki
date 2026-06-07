@@ -1219,3 +1219,27 @@ def json_loads(value: str | None) -> Any:
     import json
 
     return json.loads(value or "[]")
+
+
+def test_write_inbox_file_rejects_oversized_new_content(tmp_path: Path, monkeypatch) -> None:
+    """The size guard must check the content being written, not the old file."""
+
+    import pytest
+
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    inbox_path = wiki_root / "raw" / "inbox" / "note.md"
+    inbox_path.parent.mkdir(parents=True, exist_ok=True)
+    inbox_path.write_text("small original", encoding="utf-8")
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+    monkeypatch.setenv("USER", "ingest-tester")
+    monkeypatch.setattr(pipeline, "MAX_INGEST_BYTES", 64)
+
+    with pytest.raises(pipeline.InboxFileTooLargeError, match="edited content"):
+        pipeline.write_inbox_file(wiki="ai-tooling", filename="note.md", content="x" * 65)
+    assert inbox_path.read_text(encoding="utf-8") == "small original"
+
+    pipeline.write_inbox_file(wiki="ai-tooling", filename="note.md", content="y" * 32)
+    assert inbox_path.read_text(encoding="utf-8") == "y" * 32

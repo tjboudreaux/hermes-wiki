@@ -447,6 +447,8 @@ def write_inbox_file(
         raise IngestError("inbox file not found")
     if inbox_path.stat().st_size > MAX_INGEST_BYTES:
         raise InboxFileTooLargeError("oversized inbox files cannot be edited")
+    if len(content.encode("utf-8")) > MAX_INGEST_BYTES:
+        raise InboxFileTooLargeError("edited content exceeds the ingest size limit")
 
     acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
     now = _utc_now()
