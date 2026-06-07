@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.5.0...v0.6.0) (2026-06-07)
+
+
+### Features
+
+* **evals:** PDF extraction gates, golden, live pdf skill reference ([5fa9dc8](https://github.com/tjboudreaux/hermes-wiki/commit/5fa9dc81d4cb67e738fc3e2dc165bf44cbcad093))
+* PDF modality — pdfplumber extraction with page anchors (design PR1) ([46b7855](https://github.com/tjboudreaux/hermes-wiki/commit/46b7855b3dfb97eff3c0dbb9c0b58e1d4b747c95))
+* **pdf:** pdfplumber extraction processor and DerivedArtifact protocol ([cac40c5](https://github.com/tjboudreaux/hermes-wiki/commit/cac40c5120ae93eafb822f5d5a53f650d27d788a))
+
 ## [0.5.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.4.1...v0.5.0) (2026-06-07)
 
 
