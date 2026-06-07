@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/tjboudreaux/hermes-wiki/compare/v0.4.0...v0.4.1) (2026-06-07)
+
+
+### Documentation
+
+* media ingestion design — decision record and build plan ([b9469df](https://github.com/tjboudreaux/hermes-wiki/commit/b9469df04c8234f41b5b6d4bc309bb5a158cbfd7))
+* media ingestion design — decision record and build plan (D1–D11) ([b137f9b](https://github.com/tjboudreaux/hermes-wiki/commit/b137f9bc78e52584f3951662b30a6d6a675d7439))
+
 ## [0.4.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.3.0...v0.4.0) (2026-06-07)
 
 
