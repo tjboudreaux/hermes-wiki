@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "hermes-wiki"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -385,6 +385,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+image = [
+    { name = "pillow" },
+]
 pdf = [
     { name = "pdfplumber" },
 ]
@@ -393,6 +396,7 @@ pdf = [
 dev = [
     { name = "hermes-agent" },
     { name = "pdfplumber" },
+    { name = "pillow" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -403,14 +407,16 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.133.1" },
     { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.11.9,<0.12" },
+    { name = "pillow", marker = "extra == 'image'", specifier = ">=10.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
 ]
-provides-extras = ["pdf"]
+provides-extras = ["pdf", "image"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "hermes-agent", git = "https://github.com/NousResearch/hermes-agent.git?rev=main" },
     { name = "pdfplumber", specifier = ">=0.11.9,<0.12" },
+    { name = "pillow", specifier = ">=10.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.16" },
