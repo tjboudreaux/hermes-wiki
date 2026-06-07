@@ -1,0 +1,38 @@
+[
+  {
+    "skills": ["wiki-writing"],
+    "query": "The wiki has a page citing the 2025 benchmark ('BM25 outperforms dense retrieval by 11 points nDCG@10; BM25 recommended default'). Ingest the 2026 update and reconcile the wiki.",
+    "files": [
+      "evals/corpus/multi-source-contradiction/sources/memory-benchmarks-2025.md",
+      "evals/corpus/multi-source-contradiction/sources/memory-benchmarks-2026-update.md"
+    ],
+    "expected_behavior": [
+      "Checks publication dates and treats the 2026 result as superseding the 2025 headline claim for mixed corpora",
+      "Updates the claim citing both source pages with their dates, rather than deleting the 2025 finding or keeping both as if independent",
+      "Preserves the slice where the 2025 finding still holds (identifier-heavy queries) — does not over-generalize the supersession"
+    ]
+  },
+  {
+    "skills": ["wiki-writing"],
+    "query": "Two same-period sources in this wiki make genuinely conflicting recommendations about the default ranker, with no clear recency winner. Write the concept page.",
+    "files": [
+      "evals/corpus/multi-source-contradiction/sources/memory-benchmarks-2025.md",
+      "evals/corpus/multi-source-contradiction/sources/memory-benchmarks-2026-update.md"
+    ],
+    "expected_behavior": [
+      "Records both positions in the page body with their dates and source citations — does not silently merge or pick a winner without justification",
+      "Sets contested: true and records the conflicting page id(s) in the contradictions: frontmatter field",
+      "Leaves the contested flag for review (it surfaces as unresolved_contested in lint) rather than resolving unilaterally"
+    ]
+  },
+  {
+    "skills": ["wiki-ingestion", "wiki-writing"],
+    "query": "Re-ingest a source URL whose content changed since the original snapshot (drift_detected=true). The wiki has pages citing the old snapshot.",
+    "files": [],
+    "expected_behavior": [
+      "Reviews pages whose sources: cite the superseded snapshot version",
+      "Applies the contradiction protocol where the new content conflicts with claims derived from the old snapshot: newer supersedes, both versions cited with dates",
+      "Does not edit the raw snapshots themselves — they are append-only; only wiki pages are updated"
+    ]
+  }
+]
