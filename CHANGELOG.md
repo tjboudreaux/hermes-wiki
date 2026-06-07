@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.10.0...v0.11.0) (2026-06-07)
+
+
+### Features
+
+* YouTube modality — watch-and-note default, opt-in captions (design PR6) ([ff9ee8b](https://github.com/tjboudreaux/hermes-wiki/commit/ff9ee8b3a9f1a562984b948dcb4017043b2624f7))
+* **youtube:** notes-by-default ingestion with opt-in captions mode ([4447a0c](https://github.com/tjboudreaux/hermes-wiki/commit/4447a0cb9dd649ba124e0c26473475ee98116250))
+
 ## [0.10.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.9.0...v0.10.0) (2026-06-07)
 
 
