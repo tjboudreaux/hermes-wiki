@@ -63,7 +63,7 @@ class MediaRequirement:
 MEDIA_REQUIREMENTS: dict[str, tuple[MediaRequirement, ...]] = {
     "image": (),  # Pillow is an optional enhancement; the stub page works without it
     "audio": (MediaRequirement("python", "faster_whisper", "hermes-wiki[audio]"),),
-    "video": (MediaRequirement("binary", "ffmpeg", "brew install ffmpeg | apt install ffmpeg"),),
+    "video": (MediaRequirement("python", "scenedetect", "hermes-wiki[video]"),),
 }
 
 
@@ -159,6 +159,22 @@ def copy_stream(source: Path, destination: Path) -> None:
 
 
 DEFAULT_TRANSCRIBE_MODEL = "base"
+DEFAULT_MAX_KEYFRAMES = 24
+
+
+def max_keyframes(config: dict[str, Any] | None) -> int:
+    """Resolve ``wiki.media.max_keyframes`` (keyframe cap per video, D2)."""
+
+    if isinstance(config, dict):
+        media_cfg = config.get("media")
+        if isinstance(media_cfg, dict):
+            try:
+                value = int(media_cfg.get("max_keyframes"))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+    return DEFAULT_MAX_KEYFRAMES
 
 
 def transcribe_model(config: dict[str, Any] | None) -> str:
@@ -213,6 +229,7 @@ def needs_deps_status(missing: list[MediaRequirement]) -> str:
 
 __all__ = [
     "DEFAULT_KEEP_ORIGINALS",
+    "DEFAULT_MAX_KEYFRAMES",
     "DEFAULT_TRANSCRIBE_MODEL",
     "KEEP_ORIGINALS_MODES",
     "LARGE_MEDIA_REL",
@@ -226,6 +243,7 @@ __all__ = [
     "derived_modality",
     "derived_root",
     "keep_originals_mode",
+    "max_keyframes",
     "missing_dependencies",
     "needs_deps_status",
     "package_version",

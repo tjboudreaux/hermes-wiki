@@ -405,10 +405,188 @@ __all__ = [
     "AUDIO_TOOL",
     "IMAGE_TOOL",
     "PDF_TOOL",
+    "VIDEO_TOOL",
     "AudioProcessor",
     "ImageProcessor",
     "PdfProcessor",
+    "VideoProcessor",
     "audio_processor_or_none",
     "image_processor_or_none",
     "pdf_processor_or_none",
+    "video_processor_or_none",
 ]
+
+
+VIDEO_TOOL = "scenedetect"
+
+#: (scene_start_seconds, jpeg_bytes) keyframes per detected scene.
+SceneKeyframes = list[tuple[float, bytes]]
+
+
+def video_processor_or_none() -> VideoProcessor | None:
+    """Return the video processor when scenedetect (+OpenCV) is installed."""
+
+    if importlib.util.find_spec("scenedetect") is None:
+        return None
+    if importlib.util.find_spec("cv2") is None:
+        return None
+    return VideoProcessor()
+
+
+def _default_detect_scenes(
+    source_bytes: bytes,
+    source_local_path: str,
+    limit: int,
+) -> tuple[SceneKeyframes, str]:
+    """PySceneDetect ContentDetector keyframes (first frame per scene)."""
+
+    import tempfile
+
+    import cv2  # ty: ignore[unresolved-import]
+    from scenedetect import ContentDetector, detect  # ty: ignore[unresolved-import]
+
+    def _detect_at(path: str) -> SceneKeyframes:
+        scene_list = detect(path, ContentDetector())
+        if scene_list:
+            starts = [start.get_seconds() for start, _end in scene_list]
+        else:
+            starts = [0.0]
+        capture = cv2.VideoCapture(path)
+        keyframes: SceneKeyframes = []
+        try:
+            for start in starts[:limit]:
+                capture.set(cv2.CAP_PROP_POS_MSEC, max(start, 0.0) * 1000.0)
+                ok, frame = capture.read()
+                if not ok:
+                    continue
+                ok, encoded = cv2.imencode(
+                    ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+                )
+                if ok:
+                    keyframes.append((float(start), encoded.tobytes()))
+        finally:
+            capture.release()
+        return keyframes
+
+    version = importlib.metadata.version("scenedetect")
+    if source_local_path:
+        return _detect_at(source_local_path), version
+    with tempfile.NamedTemporaryFile(suffix=".video") as handle:
+        handle.write(source_bytes)
+        handle.flush()
+        return _detect_at(handle.name), version
+
+
+class VideoProcessor:
+    """Scene keyframes + audio-track transcription for ``video`` sources (PR4).
+
+    Composition per the design: PySceneDetect picks scene-start keyframes
+    (capped via ``wiki.media.max_keyframes``, D2) and the audio transcriber
+    runs over the container directly (PyAV demuxes the audio track — no
+    ffmpeg extraction step). Both extractors are injectable for deterministic
+    tests; keyframe captioning stays agent-side (images protocol).
+    """
+
+    def __init__(
+        self,
+        detect_scenes: Callable[[bytes, str, int], tuple[SceneKeyframes, str]] | None = None,
+        transcribe: Callable[[bytes, str, str], tuple[TranscriptSegments, str]] | None = None,
+    ) -> None:
+        self._detect_scenes = detect_scenes or _default_detect_scenes
+        self._transcribe = transcribe
+
+    def process(self, request: ProcessRequest) -> list[GeneratedPage | DerivedArtifact]:
+        from hermes_wiki.pipeline import MediaStubProcessor, _media_settings
+
+        settings = _media_settings()
+        limit = media.max_keyframes(settings)
+        try:
+            keyframes, scene_version = self._detect_scenes(
+                request.source_bytes, request.source_local_path, limit
+            )
+        except Exception:
+            return MediaStubProcessor().process(request)
+
+        segments: TranscriptSegments = []
+        transcriber = self._transcribe
+        if transcriber is None and importlib.util.find_spec("faster_whisper") is not None:
+            transcriber = _default_transcribe
+        if transcriber is not None:
+            try:
+                segments, _tv = transcriber(
+                    request.source_bytes,
+                    request.source_local_path,
+                    media.transcribe_model(settings),
+                )
+            except Exception:
+                segments = []
+
+        artifacts: list[DerivedArtifact] = [
+            DerivedArtifact(
+                relpath=f"keyframes/scene-{index:02d}-{int(start):04d}s.jpg",
+                content=jpeg,
+                tool=VIDEO_TOOL,
+                version=scene_version,
+                details={},
+            )
+            for index, (start, jpeg) in enumerate(keyframes, 1)
+        ]
+        artifacts.append(
+            DerivedArtifact(
+                relpath="transcript.md",
+                content=_render_transcript(request.title, "video-track", segments),
+                tool=VIDEO_TOOL,
+                version=scene_version,
+                details={
+                    "scenes": len(keyframes),
+                    "segments": len(segments),
+                },
+            )
+        )
+
+        source_page = WikiPage(
+            id=request.source_page_id,
+            title=request.title,
+            type="source",
+            body=_video_source_body(request, keyframes, segments),
+            tags=("ingest", request.label.name),
+            sources=(request.manifest_relpath or request.snapshot_relpath,),
+            confidence=request.label.confidence,
+        )
+        return [*artifacts, GeneratedPage(source_page)]
+
+
+def _video_source_body(
+    request: ProcessRequest,
+    keyframes: SceneKeyframes,
+    segments: TranscriptSegments,
+) -> str:
+    base = request.manifest_relpath.rsplit("/", 1)[0] if request.manifest_relpath else ""
+    transcript_rel = f"{base}/transcript.md" if base else "transcript.md"
+    lines = [
+        f"# {request.title}",
+        "",
+        f"Video source; {len(keyframes)} scene keyframes and "
+        f"{len(segments)} transcript segments extracted.",
+        "",
+        f"- Classification: `{request.label.name}` ({request.label.confidence})",
+    ]
+    if request.manifest_relpath:
+        lines.append(f"- Provenance: [Derived Manifest](../{request.manifest_relpath})")
+    lines.append(f"- Transcript: [transcript.md](../{transcript_rel})")
+    for index, (start, _jpeg) in enumerate(keyframes[:6], 1):
+        name = f"scene-{index:02d}-{int(start):04d}s.jpg"
+        lines.append(f"- Scene {index} @ {_timestamp(start)}: [{name}](../{base}/keyframes/{name})")
+    if len(keyframes) > 6:
+        lines.append(f"- … {len(keyframes) - 6} more keyframes in `{base}/keyframes/`")
+    summary = next((text for _s, _e, text in segments if text), "")
+    if summary:
+        lines.extend(["", " ".join(summary.split())[:280]])
+    lines.extend(
+        [
+            "",
+            "Caption keyframes before citing them as evidence (images protocol);",
+            "verify load-bearing quotes against the moment in the video.",
+        ]
+    )
+    return "\n".join(lines)
