@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.3.0...v0.4.0) (2026-06-07)
+
+
+### Features
+
+* **prompt:** instruct agents to load assigned wiki skills before writing ([60d17b9](https://github.com/tjboudreaux/hermes-wiki/commit/60d17b9847fece9c830ceb653ae0ef673d9b010b))
+* **prompt:** load assigned wiki skills before writing (F9) ([641a273](https://github.com/tjboudreaux/hermes-wiki/commit/641a273398517964fae3ee208da4f4b72852045a))
+
 ## [0.3.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.2.0...v0.3.0) (2026-06-07)
 
 
