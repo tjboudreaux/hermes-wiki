@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.6.0...v0.7.0) (2026-06-07)
+
+
+### Features
+
+* image modality — Pillow metadata + OCR, captioning protocol (design PR2) ([d9853ee](https://github.com/tjboudreaux/hermes-wiki/commit/d9853ee50740be17677b5ad89934eba7106b3ed8))
+* **image:** Pillow metadata extraction, best-effort OCR, embed pages ([a45dfd5](https://github.com/tjboudreaux/hermes-wiki/commit/a45dfd56279512c64f6b8b83c0f6514fe1ef3523))
+
 ## [0.6.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.5.0...v0.6.0) (2026-06-07)
 
 
