@@ -25,3 +25,19 @@ def test_media_corpus_integrity() -> None:
     for name, meta in sorted(golden.items()):
         data = (CORPUS / "sources" / name).read_bytes()
         assert hashlib.sha256(data).hexdigest() == meta["sha256"], f"fixture drifted: {name}"
+
+
+def test_pdf_extraction_gate() -> None:
+    """Weekly lane: extraction of the corpus PDF stays byte-stable (PR1)."""
+
+    import io
+
+    import pdfplumber
+
+    data = (CORPUS / "sources" / "two-page.pdf").read_bytes()
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        pages = [(page.extract_text() or "").strip() for page in pdf.pages]
+    assert pages == [
+        "Corpus Page One: modular memory",
+        "Corpus Page Two: retrieval table",
+    ]

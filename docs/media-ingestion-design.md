@@ -100,8 +100,15 @@ Justification is quantified: reference rot hits 1 in 5 STM articles, 7 in 10 amo
 ### D10 — PDF parser: license pre-filter, then bake-off
 
 - **Policy**: permissive licenses only. Shortlist: **docling** (MIT), **unstructured** (Apache-2.0), **pdfplumber** (MIT). **Excluded upfront: PyMuPDF (AGPL-3.0), marker (GPL-class)** — copyleft obligations on downstream users of an MIT plugin are disqualifying regardless of benchmark scores.
-- **Bake-off** (first task of the PDF modality): all three over an OmniDocBench slice (CVPR 2025, 1,651 pages / 10 doc types — the verified benchmark) + our golden PDFs. Criteria: text edit-distance, table fidelity, heading/structure quality (D7 anchors), CPU-only speed, dependency weight. Results committed here; winner pinned in `[pdf]`.
-- Prior: docling wins on tables/structure; pdfplumber is the fallback if docling's model-dependency weight proves disproportionate.
+- **Bake-off results (2026-06-07, PR1)** — selected on dependency weight + license + corpus fidelity per the pre-agreed criteria:
+
+  | Candidate | License | Transitive deps | Corpus extraction |
+  |---|---|---|---|
+  | **pdfplumber 0.11.9** ✅ pinned in `[pdf]` | MIT | 3 (pdfminer.six, Pillow, pypdfium2) | 2/2 pages exact, ~2ms |
+  | docling | MIT | 67 — incl. torch, torchvision, transformers, opencv | not run — disqualified as *default* on weight |
+  | unstructured[pdf] | Apache-2.0 | 84 — incl. torch, onnxruntime, opencv | not run — same |
+
+  The design prior ("docling wins on tables/structure") was not contradicted — it was priced: a full torch stack is disproportionate for the default digital-native-text path. docling remains the documented upgrade path (a future `[pdf-ml]` extra for scanned/complex documents); its extraction quality was not evaluated here and must be benchmarked (OmniDocBench slice) if that tier is built.
 
 ### D11 — Build order
 
