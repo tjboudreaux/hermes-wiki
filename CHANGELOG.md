@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.7.0...v0.8.0) (2026-06-07)
+
+
+### Features
+
+* audio modality — faster-whisper transcription with hh:mm:ss anchors (design PR3) ([66e4277](https://github.com/tjboudreaux/hermes-wiki/commit/66e427761419aba2c0bdfd6f12f6823b5346d18a))
+* **audio:** faster-whisper transcription with timestamped anchors ([02905e3](https://github.com/tjboudreaux/hermes-wiki/commit/02905e337117c40109d1778f267781bb0a1b0bab))
+
 ## [0.7.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.6.0...v0.7.0) (2026-06-07)
 
 
