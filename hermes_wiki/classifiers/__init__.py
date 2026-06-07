@@ -98,10 +98,53 @@ def _classify_transcript(name: str, content: bytes) -> ClassLabel | None:
     return None
 
 
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
+
+
+def _classify_image(name: str, content: bytes) -> ClassLabel | None:
+    if (
+        content.startswith(b"\x89PNG\r\n\x1a\n")
+        or content.startswith(b"\xff\xd8\xff")
+        or content.startswith((b"GIF87a", b"GIF89a"))
+        or (content.startswith(b"RIFF") and content[8:12] == b"WEBP")
+    ):
+        return ClassLabel("image", "high", "image magic bytes")
+    if Path(name).suffix.lower() in _IMAGE_SUFFIXES:
+        return ClassLabel("image", "medium", "image file extension")
+    return None
+
+
+def _classify_audio(name: str, content: bytes) -> ClassLabel | None:
+    if (
+        (content.startswith(b"RIFF") and content[8:12] == b"WAVE")
+        or content.startswith((b"fLaC", b"OggS", b"ID3"))
+        or content[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}
+        or (content[4:8] == b"ftyp" and content[8:11] == b"M4A")
+    ):
+        return ClassLabel("audio", "high", "audio magic bytes")
+    if Path(name).suffix.lower() in _AUDIO_SUFFIXES:
+        return ClassLabel("audio", "medium", "audio file extension")
+    return None
+
+
+def _classify_video(name: str, content: bytes) -> ClassLabel | None:
+    # Runs after audio, so remaining ftyp brands (isom/mp42/qt …) are video.
+    if content[4:8] == b"ftyp" or content.startswith(b"\x1aE\xdf\xa3"):
+        return ClassLabel("video", "high", "video container magic bytes")
+    if Path(name).suffix.lower() in _VIDEO_SUFFIXES:
+        return ClassLabel("video", "medium", "video file extension")
+    return None
+
+
 BUILTIN_CLASSIFIERS: tuple[BuiltinClassifier, ...] = (
     BuiltinClassifier("article", _classify_article),
     BuiltinClassifier("paper", _classify_paper),
     BuiltinClassifier("transcript", _classify_transcript),
+    BuiltinClassifier("image", _classify_image),
+    BuiltinClassifier("audio", _classify_audio),
+    BuiltinClassifier("video", _classify_video),
 )
 
 

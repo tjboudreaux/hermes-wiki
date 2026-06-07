@@ -38,6 +38,9 @@ RAW_SUBDIRS = {
     "article": "articles",
     "paper": "papers",
     "transcript": "transcripts",
+    "image": "images",
+    "audio": "audio",
+    "video": "video",
     "unknown": "unknown",
 }
 INBOX_STATUS_REL = Path("raw/inbox_status.json")
