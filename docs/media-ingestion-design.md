@@ -130,6 +130,7 @@ Each PR lands **evals-first** with its lane gates.
 
 1. Structured `evidence:` frontmatter spans + dashboard media player (D7)
 2. True WARC page capture for social/web sources (D9)
+2a. Generic OpenGraph unfurl for arbitrary URLs — **deferred from PR5** (2026-06-07): enriching every HTML URL ingest with OG metadata changes existing article-ingestion semantics, so PR5 shipped the Bluesky/Mastodon/X adapters + read-and-note fallback only; X landed via its public oEmbed endpoint (no timestamp exposed)
 3. Cloud-ASR config escape hatch (D3)
 4. `derived_stale` lint check (input-sha drift against manifests) (D2)
 
