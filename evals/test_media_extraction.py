@@ -41,3 +41,16 @@ def test_pdf_extraction_gate() -> None:
         "Corpus Page One: modular memory",
         "Corpus Page Two: retrieval table",
     ]
+
+
+def test_image_metadata_extraction_gate() -> None:
+    """Weekly lane: Pillow metadata for the corpus chart stays stable (PR2)."""
+
+    import io
+
+    from PIL import Image
+
+    data = (CORPUS / "sources" / "chart.png").read_bytes()
+    with Image.open(io.BytesIO(data)) as img:
+        assert img.size == (64, 64)
+        assert str(img.format).lower() == "png"

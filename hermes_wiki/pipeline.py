@@ -215,14 +215,20 @@ class MediaStubProcessor:
 
 
 def _builtin_processor_for_label(label_name: str) -> Processor:
+    if label_name == "image":
+        from hermes_wiki.media_processors import image_processor_or_none
+
+        processor = image_processor_or_none()
+        if processor is not None:
+            return processor
     if label_name in media.MEDIA_LABELS:
         return MediaStubProcessor()
     if label_name == "paper":
         from hermes_wiki.media_processors import pdf_processor_or_none
 
-        processor = pdf_processor_or_none()
-        if processor is not None:
-            return processor
+        pdf_processor = pdf_processor_or_none()
+        if pdf_processor is not None:
+            return pdf_processor
     return DefaultProcessor()
 
 
