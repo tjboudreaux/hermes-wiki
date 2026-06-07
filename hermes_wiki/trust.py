@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import textwrap
 from pathlib import Path
@@ -299,6 +300,9 @@ def _replace_schema_trust_record(
     schema = wiki_root / "SCHEMA.md"
     text = schema.read_text(encoding="utf-8")
     text, _removed = _remove_trust_blocks_from_text(text, name=name, kind=kind)
+    # The author is free text (CLI --author / $USER); quote it as a JSON string
+    # (valid YAML double-quoted scalar) so values containing ": " or other YAML
+    # indicators survive the yaml.safe_load round-trip.
     block = textwrap.dedent(
         f"""
 
@@ -310,7 +314,7 @@ def _replace_schema_trust_record(
           path: {path}
           sha256: {sha256}
           trusted_at: {trusted_at}
-          author: {author}
+          author: {json.dumps(author)}
           author_kind: human
         ```
         """
