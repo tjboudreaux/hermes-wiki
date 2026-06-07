@@ -194,3 +194,33 @@ def test_cli_skills_set_rejects_bad_kind(tmp_path: Path) -> None:
     )
 
     assert code == 2  # argparse choices rejection
+
+
+def test_media_skill_kind_round_trips(tmp_path) -> None:
+    """The media kind is assignable and defaults to wiki:wiki-media-ingestion."""
+
+    from hermes_wiki.skills import DEFAULT_WIKI_SKILLS, SKILL_KINDS
+
+    assert "media" in SKILL_KINDS
+    assert DEFAULT_WIKI_SKILLS["media"] == "wiki:wiki-media-ingestion"
+
+    code, _out, _err = _run_cli(tmp_path, "create", "ai-tooling")
+    assert code == 0
+    code, out, _err = _run_cli(tmp_path, "skills", "show", "--wiki", "ai-tooling")
+    assert code == 0
+    assert "media: wiki:wiki-media-ingestion (default)" in out
+
+    code, _out, _err = _run_cli(
+        tmp_path,
+        "skills",
+        "set",
+        "media",
+        "lab:custom-media",
+        "--wiki",
+        "ai-tooling",
+        env={"HERMES_WIKI": "ai-tooling"},
+    )
+    assert code == 0
+    code, out, _err = _run_cli(tmp_path, "skills", "show", "--wiki", "ai-tooling")
+    assert code == 0
+    assert "media: lab:custom-media" in out

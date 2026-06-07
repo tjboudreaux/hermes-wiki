@@ -29,7 +29,7 @@ from hermes_wiki.monitors import MonitorError, define_monitor, setup_monitors, s
 from hermes_wiki.navigation import WikiNavigationError, list_wiki_pages, open_wiki_page
 from hermes_wiki.pipeline import IngestError, ingest_inbox, ingest_source, list_inbox
 from hermes_wiki.search import search_wiki
-from hermes_wiki.skills import SkillsError, read_wiki_skills, set_wiki_skill
+from hermes_wiki.skills import SKILL_KINDS, SkillsError, read_wiki_skills, set_wiki_skill
 from hermes_wiki.tools import (
     WRITE_PERMISSION_DENIED,
     _check_wiki_write_mode,
@@ -588,7 +588,7 @@ def _add_management_subcommands(
     skills_show.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
     skills_show.add_argument("--profile", help="Profile for current-wiki resolution")
     skills_set = skills_subparsers.add_parser("set", help="Assign a skill for one kind")
-    skills_set.add_argument("kind", choices=("ingestion", "writing"))
+    skills_set.add_argument("kind", choices=SKILL_KINDS)
     skills_set.add_argument("skill", help="Skill name, e.g. wiki:wiki-ingestion")
     skills_set.add_argument("--wiki", dest="wiki", help="Explicit wiki slug")
     skills_set.add_argument("--profile", help="Profile for current-wiki resolution")

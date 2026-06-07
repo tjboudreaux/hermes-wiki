@@ -88,6 +88,7 @@ class WikiSkillsUpdateRequest(BaseModel):
 
     ingestion: str | None = None
     writing: str | None = None
+    media: str | None = None
 
 
 @router.get("/wikis")
@@ -400,11 +401,15 @@ def update_wiki_skills(slug: str, payload: WikiSkillsUpdateRequest) -> dict[str,
     _require_write(slug)
     updates = {
         kind: value
-        for kind, value in (("ingestion", payload.ingestion), ("writing", payload.writing))
+        for kind, value in (
+            ("ingestion", payload.ingestion),
+            ("writing", payload.writing),
+            ("media", payload.media),
+        )
         if value is not None
     }
     if not updates:
-        raise _bad_request("at least one of ingestion or writing is required")
+        raise _bad_request("at least one of ingestion, writing, or media is required")
     result: dict[str, Any] | None = None
     try:
         for kind, value in updates.items():
