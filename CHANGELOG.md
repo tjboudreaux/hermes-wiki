@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.9.0...v0.10.0) (2026-06-07)
+
+
+### Features
+
+* social modality — Bluesky/Mastodon/X adapters with evidence snapshots (design PR5) ([0e56764](https://github.com/tjboudreaux/hermes-wiki/commit/0e567649e037b5024833ddae801d9a28d7ec0a2b))
+* **social:** Bluesky/Mastodon/X post adapters with API-evidence snapshots ([12a9dd9](https://github.com/tjboudreaux/hermes-wiki/commit/12a9dd92b4c83a97c6a0a30335f803fee7034889))
+
 ## [0.9.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.8.0...v0.9.0) (2026-06-07)
 
 
