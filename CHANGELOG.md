@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.3.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.2.0...v0.3.0) (2026-06-07)
+
+
+### Features
+
+* **api:** expose per-wiki skill assignment endpoints ([54bd536](https://github.com/tjboudreaux/hermes-wiki/commit/54bd536f6ab500ed447da769d674de595eea71b2))
+* **cli:** add wiki skills show/set commands ([848267e](https://github.com/tjboudreaux/hermes-wiki/commit/848267e8334f118c0e0b555ad4d9a899f9d72b83))
+* **dashboard:** add per-wiki skills settings card ([8758fbf](https://github.com/tjboudreaux/hermes-wiki/commit/8758fbf053b64d821c3a228ea17cedffd962c993))
+* **evals:** add skill-behavior eval cases and corpus sources ([cba0adb](https://github.com/tjboudreaux/hermes-wiki/commit/cba0adbc37f6fd7c6e57d1689f5f46c912ecce9c))
+* **evals:** pytest eval harness, BM25 baseline gate, and graph metrics ([3c25c6d](https://github.com/tjboudreaux/hermes-wiki/commit/3c25c6d26e89b2de4af038c42cf04f2f3df6df45))
+* **lint:** add unresolved_citation check; ci: coverage floor + golden snapshots ([b47d56d](https://github.com/tjboudreaux/hermes-wiki/commit/b47d56d54545921ed7efcad8a7ea46e6cb6989e4))
+* **skills:** package wiki skills and register them with Hermes ([9614040](https://github.com/tjboudreaux/hermes-wiki/commit/9614040e6d0f931df0678aec43edb669067a70a1))
+* **skills:** per-wiki skill assignments stored in SCHEMA.md ([a31bbf7](https://github.com/tjboudreaux/hermes-wiki/commit/a31bbf731fe41421adc24b21db0b9f6faaa323ec))
+* **skills:** port upstream synthesis/dedup/contradiction protocols ([1d5abbb](https://github.com/tjboudreaux/hermes-wiki/commit/1d5abbb82103019a2e6031f92f035a21cb31ec5f))
+* wiki skills, per-wiki skill assignments, and hooks architecture ([0f2d1d4](https://github.com/tjboudreaux/hermes-wiki/commit/0f2d1d4fc2d47da3141a584f2b041f580cb5bb10))
+
+
+### Bug Fixes
+
+* **dashboard:** unlink multipart upload temp file after ingest ([13b5167](https://github.com/tjboudreaux/hermes-wiki/commit/13b516704714576c5ec4f8d33f549404fcaaa220))
+* **lint:** keep confirmed kanban findings on mid-scan unavailability ([4961025](https://github.com/tjboudreaux/hermes-wiki/commit/4961025c3d1b83e30935531b11aafa645b8f2b27))
+* **pipeline:** correct keyword-only param handling in processor dispatch ([100b3b4](https://github.com/tjboudreaux/hermes-wiki/commit/100b3b4153167c2228798213e9b607ef6628410f))
+* **pipeline:** size-check the new content in write_inbox_file ([93e6cfd](https://github.com/tjboudreaux/hermes-wiki/commit/93e6cfd58b93dc982dbd8b9fd073fffbf12dae90))
+* **trust:** quote the author scalar in SCHEMA.md trust blocks ([dc6168e](https://github.com/tjboudreaux/hermes-wiki/commit/dc6168ee69a67a9b8456783dbeda8e05b490b4d2))
+
+
+### Performance Improvements
+
+* **db:** only rebuild the FTS index when pages_fts is first created ([a796c00](https://github.com/tjboudreaux/hermes-wiki/commit/a796c0063cd73b51b082ec1603118c99253fd64e))
+
+
+### Documentation
+
+* add quality audit and improvement roadmap ([b64c0e9](https://github.com/tjboudreaux/hermes-wiki/commit/b64c0e975a8f9e1fb7585374cafa8eb757b7823e))
+* **audit:** record verified skill-precedence findings, add F9 ([a1b779c](https://github.com/tjboudreaux/hermes-wiki/commit/a1b779c73e5c1875ecafae4f101bf8450ac73137))
+* per-wiki hooks architecture and skills CLI reference ([ee19074](https://github.com/tjboudreaux/hermes-wiki/commit/ee190740f4b72572026de60e7c092a9d9803cc26))
+* split bundled llm-wiki skill decision by layer in CONTEXT.md ([081515e](https://github.com/tjboudreaux/hermes-wiki/commit/081515ea3148e4f51a12461039c13f48ff4265e2))
+
 ## [0.2.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.1.0...v0.2.0) (2026-06-06)
 
 
