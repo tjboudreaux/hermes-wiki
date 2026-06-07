@@ -36,6 +36,7 @@ from hermes_wiki.models import ClassLabel, WikiPage
 MAX_INGEST_BYTES = 50 * 1024 * 1024
 RAW_SUBDIRS = {
     "article": "articles",
+    "social": "social",
     "paper": "papers",
     "transcript": "transcripts",
     "image": "images",
@@ -283,6 +284,34 @@ def ingest_source(
 
     acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
     wiki_root = resolved.path
+
+    from hermes_wiki import social as social_mod
+
+    if social_mod.match_social_url(source_ref) is not None:
+        try:
+            post = social_mod.fetch_social_post(source_ref)
+        except social_mod.SocialFetchError as exc:
+            raise IngestError(str(exc)) from exc
+        raw_json = json.dumps(post.raw, indent=2, sort_keys=True).encode("utf-8")
+        source = _SourceContent(
+            ref=source_ref,
+            name=f"{post.platform}-post-{post.post_id}.json",
+            suffix=".json",
+            content=raw_json,
+            text=post.text,
+            url=source_ref,
+        )
+        return _ingest_source_content(
+            source_ref,
+            source=source,
+            wiki_slug=resolved.slug,
+            wiki_root=wiki_root,
+            author=acting_author,
+            author_kind=acting_kind,
+            processor=processor or social_mod.SocialProcessor(post),
+            remove_source_path=None,
+            preclassified_label=ClassLabel("social", "high", f"{post.platform} adapter"),
+        )
 
     local_path = _local_source_path(source_ref)
     if local_path is not None and local_path.stat().st_size > MAX_INGEST_BYTES:
