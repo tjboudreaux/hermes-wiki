@@ -1291,5 +1291,5 @@ def test_call_custom_processor_dispatch_handles_keyword_only_params() -> None:
     def unsupported(req: object, *, mode: str) -> None:
         raise AssertionError("must not be called")
 
-    with pytest.raises(pipeline.ProcessorError, match="keyword-only.*mode"):
+    with pytest.raises(pipeline.ProcessorError, match=r"keyword-only.*mode"):
         pipeline._call_custom_processor(unsupported, request)

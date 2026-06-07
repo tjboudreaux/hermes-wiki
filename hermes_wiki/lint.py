@@ -652,7 +652,10 @@ def _dangling_kanban_findings(
         try:
             task = read_task(task_id)
         except KanbanUnavailableError:
-            return []
+            # Kanban became unreachable mid-scan: keep the dangling refs that
+            # were already confirmed while it was reachable; skip the rest
+            # (unreachable does not mean dangling).
+            return findings
         if task is not None:
             continue
         findings.append(

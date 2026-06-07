@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from hermes_wiki import db
 
@@ -313,7 +314,7 @@ def test_operational_crud_primitives(tmp_path: Path) -> None:
 def test_initialize_wiki_only_rebuilds_fts_when_table_is_created(tmp_path: Path) -> None:
     """Re-running initialize_wiki on a live DB must not rebuild the FTS index."""
 
-    def _page_kwargs(page_id: str) -> dict[str, object]:
+    def _page_kwargs(page_id: str) -> dict[str, Any]:
         return {
             "id": page_id,
             "title": page_id.rsplit("/", 1)[-1].replace("-", " ").title(),
@@ -333,8 +334,8 @@ def test_initialize_wiki_only_rebuilds_fts_when_table_is_created(tmp_path: Path)
             "body_text": "alpha concept body",
         }
 
-    def _search_ids(conn: object) -> list[str]:
-        rows = db.search_pages(conn, '"alpha"', limit=5)  # type: ignore[arg-type]
+    def _search_ids(conn: sqlite3.Connection) -> list[str]:
+        rows = db.search_pages(conn, '"alpha"', limit=5)
         return [str(row["id"]) for row in rows]
 
     with db.connect_wiki(tmp_path / "wiki.db") as conn:
