@@ -308,3 +308,58 @@ def test_operational_crud_primitives(tmp_path: Path) -> None:
         assert db.list_trusted_plugins(conn)[0]["name"] == "article-plus"
         assert db.list_kanban_refs(conn, page_id="concepts/agent-memory")[0]["task_id"] == "KB-123"
         assert db.list_projection_versions(conn)[0]["version_id"] == "initial"
+
+
+def test_initialize_wiki_only_rebuilds_fts_when_table_is_created(tmp_path: Path) -> None:
+    """Re-running initialize_wiki on a live DB must not rebuild the FTS index."""
+
+    def _page_kwargs(page_id: str) -> dict[str, object]:
+        return {
+            "id": page_id,
+            "title": page_id.rsplit("/", 1)[-1].replace("-", " ").title(),
+            "type": "concept",
+            "created": "2026-06-05T00:00:00Z",
+            "updated": "2026-06-05T00:00:00Z",
+            "tags": ("agents",),
+            "sources": (),
+            "confidence": "medium",
+            "contested": 0,
+            "contradictions": None,
+            "author": "db-tester",
+            "author_kind": "human",
+            "sha256": "0" * 64,
+            "inbound_links": 0,
+            "snippet": "alpha concept snippet",
+            "body_text": "alpha concept body",
+        }
+
+    def _search_ids(conn: object) -> list[str]:
+        rows = db.search_pages(conn, '"alpha"', limit=5)  # type: ignore[arg-type]
+        return [str(row["id"]) for row in rows]
+
+    with db.connect_wiki(tmp_path / "wiki.db") as conn:
+        db.initialize_wiki(conn)
+        db.upsert_page(conn, **_page_kwargs("concepts/alpha"))
+        conn.commit()
+        assert _search_ids(conn) == ["concepts/alpha"]
+
+        # Second init on an already-initialized DB: no FTS rebuild statement.
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        db.initialize_wiki(conn)
+        conn.set_trace_callback(None)
+        rebuilds = [s for s in statements if "values ('rebuild')" in s.lower()]
+        assert rebuilds == [], f"unexpected FTS rebuild on re-init: {rebuilds}"
+        assert _search_ids(conn) == ["concepts/alpha"]
+
+        # Migration path: pages_fts missing over a populated pages table —
+        # initialize_wiki must create it AND rebuild so rows are indexed.
+        conn.executescript(
+            """
+            DROP TRIGGER pages_ai; DROP TRIGGER pages_ad; DROP TRIGGER pages_au;
+            DROP TABLE pages_fts;
+            """
+        )
+        db.initialize_wiki(conn)
+        conn.commit()
+        assert _search_ids(conn) == ["concepts/alpha"]
