@@ -37,6 +37,7 @@ MAX_INGEST_BYTES = 50 * 1024 * 1024
 RAW_SUBDIRS = {
     "article": "articles",
     "social": "social",
+    "youtube": "youtube",
     "paper": "papers",
     "transcript": "transcripts",
     "image": "images",
@@ -286,6 +287,51 @@ def ingest_source(
     wiki_root = resolved.path
 
     from hermes_wiki import social as social_mod
+    from hermes_wiki import youtube as youtube_mod
+
+    video_id = youtube_mod.match_youtube_url(source_ref)
+    if video_id is not None:
+        mode = media.youtube_mode(_media_settings())
+        try:
+            yt_meta = youtube_mod.fetch_metadata(source_ref, video_id)
+        except social_mod.SocialFetchError as exc:
+            raise IngestError(str(exc)) from exc
+        if mode == "captions":
+            fetch_captions = youtube_mod.default_caption_fetcher_or_none()
+            if fetch_captions is None:
+                raise IngestError(
+                    "youtube captions mode requires the hermes-wiki[youtube] extra "
+                    "(yt-dlp); install it or set wiki.media.youtube back to notes"
+                )
+            try:
+                segments, caption_meta = fetch_captions(yt_meta.url)
+            except social_mod.SocialFetchError as exc:
+                raise IngestError(str(exc)) from exc
+            selected: Processor = youtube_mod.YoutubeCaptionsProcessor(
+                yt_meta, segments, caption_meta
+            )
+        else:
+            selected = youtube_mod.YoutubeNotesProcessor(yt_meta)
+        raw_json = json.dumps(yt_meta.raw, indent=2, sort_keys=True).encode("utf-8")
+        source = _SourceContent(
+            ref=source_ref,
+            name=f"youtube-{yt_meta.video_id}.json",
+            suffix=".json",
+            content=raw_json,
+            text=yt_meta.title,
+            url=source_ref,
+        )
+        return _ingest_source_content(
+            source_ref,
+            source=source,
+            wiki_slug=resolved.slug,
+            wiki_root=wiki_root,
+            author=acting_author,
+            author_kind=acting_kind,
+            processor=processor or selected,
+            remove_source_path=None,
+            preclassified_label=ClassLabel("youtube", "high", f"oEmbed ({mode})"),
+        )
 
     if social_mod.match_social_url(source_ref) is not None:
         try:
@@ -785,7 +831,7 @@ def _ingest_source_content_locked(
     source_stem = source_page_id.split("/")[-1]
     manifest_relpath = (
         f"derived/{media.derived_modality(label.name)}/{source_stem}/{media.MANIFEST_FILENAME}"
-        if label.name in media.MEDIA_LABELS or label.name == "paper"
+        if label.name in media.MEDIA_LABELS or label.name in {"paper", "youtube"}
         else ""
     )
     request = ProcessRequest(

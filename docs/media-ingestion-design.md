@@ -112,15 +112,17 @@ Justification is quantified: reference rot hits 1 in 5 STM articles, 7 in 10 amo
 
 ### D11 — Build order
 
+All seven phases shipped 2026-06-07 (v0.5.0 – v0.11.0); per-phase adaptations are recorded inline above and in the bake-off/adaptation notes.
+
 | PR | Scope |
 |---|---|
-| **0 — Foundations** | `derived/` tier + manifests (D2) · two-tier storage, `MAX_MEDIA_BYTES`, `keep_originals` (D4) · `needs-deps` retention (D3) · `media` SKILL_KIND + `wiki-media-ingestion` scaffold (D6) · micro-corpus + stub-extractor CI lane + `eval_media` marker/workflow (D5) · media classifier built-ins (extension/magic-byte) · CONTEXT/SPEC principle amendments (D1, D4) |
-| **1 — PDF** | Bake-off → pinned winner, processor, `pdf.md`, page-anchor goldens |
-| **2 — Images** | Aux-router captioning + OCR, `images.md`, FaithScore/CLIPScore lane |
-| **3 — Audio** | WhisperX processor, transcript anchors, WER/DER gates, `audio.md` |
-| **4 — Video** | PySceneDetect + composition of audio + image captioning, `video.md` |
-| **5 — Social** | Generic unfurl + Bluesky/Mastodon adapters, `social.md` *(parallelizable with 1–4)* |
-| **6 — YouTube** | oEmbed notes flow + `captions` flag, `youtube.md` |
+| **0 — Foundations** ✅ | `derived/` tier + manifests (D2) · two-tier storage, `MAX_MEDIA_BYTES`, `keep_originals` (D4) · `needs-deps` retention (D3) · `media` SKILL_KIND + `wiki-media-ingestion` scaffold (D6) · micro-corpus + stub-extractor CI lane + `eval_media` marker/workflow (D5) · media classifier built-ins (extension/magic-byte) · CONTEXT/SPEC principle amendments (D1, D4) |
+| **1 — PDF** ✅ | Bake-off → pinned winner, processor, `pdf.md`, page-anchor goldens |
+| **2 — Images** ✅ | Aux-router captioning + OCR, `images.md`, FaithScore/CLIPScore lane |
+| **3 — Audio** ✅ | WhisperX processor, transcript anchors, WER/DER gates, `audio.md` |
+| **4 — Video** ✅ | PySceneDetect + composition of audio + image captioning, `video.md` |
+| **5 — Social** ✅ | Generic unfurl + Bluesky/Mastodon adapters, `social.md` *(parallelizable with 1–4)* |
+| **6 — YouTube** ✅ | oEmbed notes flow + `captions` flag, `youtube.md` |
 
 Each PR lands **evals-first** with its lane gates.
 

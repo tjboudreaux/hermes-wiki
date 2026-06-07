@@ -160,6 +160,20 @@ def copy_stream(source: Path, destination: Path) -> None:
 
 DEFAULT_TRANSCRIBE_MODEL = "base"
 DEFAULT_MAX_KEYFRAMES = 24
+YOUTUBE_MODES = ("notes", "captions")
+DEFAULT_YOUTUBE_MODE = "notes"
+
+
+def youtube_mode(config: dict[str, Any] | None) -> str:
+    """Resolve ``wiki.media.youtube`` (D8: notes default; captions opt-in)."""
+
+    if isinstance(config, dict):
+        media_cfg = config.get("media")
+        if isinstance(media_cfg, dict):
+            mode = str(media_cfg.get("youtube") or "").strip().lower()
+            if mode in YOUTUBE_MODES:
+                return mode
+    return DEFAULT_YOUTUBE_MODE
 
 
 def max_keyframes(config: dict[str, Any] | None) -> int:
@@ -237,6 +251,7 @@ __all__ = [
     "MAX_MEDIA_BYTES",
     "MEDIA_LABELS",
     "MEDIA_REQUIREMENTS",
+    "YOUTUBE_MODES",
     "DerivedManifest",
     "MediaRequirement",
     "copy_stream",
@@ -251,4 +266,5 @@ __all__ = [
     "sha256_stream",
     "transcribe_model",
     "write_manifest",
+    "youtube_mode",
 ]
