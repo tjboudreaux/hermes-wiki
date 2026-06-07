@@ -538,6 +538,7 @@ def test_wiki_skills_get_returns_defaults(plugin_api: Any) -> None:
     assert result["skills"] == {
         "ingestion": "wiki:wiki-ingestion",
         "writing": "wiki:wiki-writing",
+        "media": "wiki:wiki-media-ingestion",
     }
     assert result["defaults"]["ingestion"] == "wiki:wiki-ingestion"
 
@@ -571,10 +572,16 @@ def test_wiki_skills_put_updates_both_kinds(
 
     updated = plugin_api.update_wiki_skills(
         "ai-tooling",
-        plugin_api.WikiSkillsUpdateRequest(ingestion="a-ingest", writing="b-writer"),
+        plugin_api.WikiSkillsUpdateRequest(
+            ingestion="a-ingest", writing="b-writer", media="c-media"
+        ),
     )
 
-    assert updated["skills"] == {"ingestion": "a-ingest", "writing": "b-writer"}
+    assert updated["skills"] == {
+        "ingestion": "a-ingest",
+        "writing": "b-writer",
+        "media": "c-media",
+    }
 
 
 def test_wiki_skills_put_requires_write_grant_and_payload(

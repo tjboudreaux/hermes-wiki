@@ -1,7 +1,7 @@
 ---
 name: wiki-ingestion
 description: "Ingest sources into a Hermes LLM Wiki: classify articles/papers/transcripts, manage the raw inbox, snapshot sources append-only, and handle oversized or unknown files."
-version: 1.1.0
+version: 1.2.0
 license: MIT
 metadata:
   hermes:
@@ -16,6 +16,9 @@ metadata:
 This is the default ingestion skill for Hermes LLM Wikis. It describes how raw
 material becomes attributable Wiki Pages. A wiki can override this default with
 `hermes wiki skills set ingestion <skill-name>`.
+
+**Media sources** (PDFs, images, audio, video, YouTube, social links) have
+their own protocols — load `wiki:wiki-media-ingestion` before ingesting them.
 
 ## The pipeline
 

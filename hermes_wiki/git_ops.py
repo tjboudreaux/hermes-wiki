@@ -25,6 +25,7 @@ GITIGNORE_ENTRIES = (
     ".ingest.lock",
     "db_versions/*.db",
     "!db_versions/manifest.jsonl",
+    "raw/large/",
 )
 _EMAIL_SAFE_RE = re.compile(r"[^A-Za-z0-9._%+-]+")
 

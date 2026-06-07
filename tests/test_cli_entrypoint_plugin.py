@@ -191,7 +191,12 @@ def test_register_exposes_packaged_wiki_skills() -> None:
     ctx = FakePluginContext()
     register(ctx)
 
-    assert set(ctx.skills) == {"wiki-commands", "wiki-ingestion", "wiki-writing"}
+    assert set(ctx.skills) == {
+        "wiki-commands",
+        "wiki-ingestion",
+        "wiki-media-ingestion",
+        "wiki-writing",
+    }
     for name, skill in ctx.skills.items():
         path = skill["path"]
         assert path == SKILLS_ROOT / name / "SKILL.md"

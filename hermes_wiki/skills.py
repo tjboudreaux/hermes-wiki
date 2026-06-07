@@ -16,10 +16,11 @@ from hermes_wiki.management import (
     ensure_wiki_mutable,
 )
 
-SKILL_KINDS = ("ingestion", "writing")
+SKILL_KINDS = ("ingestion", "writing", "media")
 DEFAULT_WIKI_SKILLS = {
     "ingestion": "wiki:wiki-ingestion",
     "writing": "wiki:wiki-writing",
+    "media": "wiki:wiki-media-ingestion",
 }
 
 _SKILLS_BLOCK_RE = re.compile(

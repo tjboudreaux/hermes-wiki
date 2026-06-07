@@ -21,7 +21,7 @@ from types import ModuleType
 from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
-from hermes_wiki import db, git_ops, projection
+from hermes_wiki import db, git_ops, media, projection
 from hermes_wiki.attribution import append_log_entry, record_change, resolve_actor
 from hermes_wiki.classifiers import classify_source as _classify_source
 from hermes_wiki.frontmatter import FrontmatterError, read_markdown, write_markdown
@@ -38,6 +38,9 @@ RAW_SUBDIRS = {
     "article": "articles",
     "paper": "papers",
     "transcript": "transcripts",
+    "image": "images",
+    "audio": "audio",
+    "video": "video",
     "unknown": "unknown",
 }
 INBOX_STATUS_REL = Path("raw/inbox_status.json")
@@ -75,6 +78,8 @@ class ProcessRequest:
     existing_pages: tuple[ExistingPage, ...]
     now: str
     today: str
+    #: Relative path of the derived-artifact manifest for media labels ("" otherwise).
+    manifest_relpath: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +172,36 @@ class DefaultProcessor:
         return [GeneratedPage(source_page), GeneratedPage(derived_page)]
 
 
+class MediaStubProcessor:
+    """Source page + provenance manifest for media awaiting modality processors.
+
+    Media bytes are not decoded into page text; the page records classification
+    and provenance and cites the derived manifest. Modality processors (PDF,
+    image, audio, video phases) replace this stub with real extraction.
+    """
+
+    def process(self, request: ProcessRequest) -> list[GeneratedPage]:
+        return [
+            GeneratedPage(
+                WikiPage(
+                    id=request.source_page_id,
+                    title=request.title,
+                    type="source",
+                    body=_media_source_body(request),
+                    tags=("ingest", request.label.name),
+                    sources=(request.manifest_relpath or request.snapshot_relpath,),
+                    confidence=request.label.confidence,
+                )
+            )
+        ]
+
+
+def _builtin_processor_for_label(label_name: str) -> Processor:
+    if label_name in media.MEDIA_LABELS:
+        return MediaStubProcessor()
+    return DefaultProcessor()
+
+
 class CustomProcessor:
     """Trusted custom processor loaded from a per-wiki path+sha record."""
 
@@ -202,8 +237,50 @@ def ingest_source(
         raise IngestError(NOT_FOUND_OR_NOT_VISIBLE) from exc
 
     acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
-    source = _read_source(source_ref)
     wiki_root = resolved.path
+
+    local_path = _local_source_path(source_ref)
+    if local_path is not None and local_path.stat().st_size > MAX_INGEST_BYTES:
+        # Two-tier media path (D4): classify from header bytes without loading
+        # the file; media within MAX_MEDIA_BYTES is processed with a streamed,
+        # sha-pinned original instead of a git-tracked snapshot.
+        size = local_path.stat().st_size
+        label = _forced_label(classifier) or classify_source(
+            local_path.name, _head_bytes(local_path), wiki_root=wiki_root
+        )
+        placeholder = _SourceContent(
+            ref=source_ref,
+            name=local_path.name,
+            suffix=local_path.suffix or ".bin",
+            content=b"",
+            text="",
+            url=None,
+            local_path=local_path,
+            size=size,
+        )
+        if label.name in media.MEDIA_LABELS and size <= media.MAX_MEDIA_BYTES:
+            return _ingest_source_content(
+                source_ref,
+                source=placeholder,
+                wiki_slug=resolved.slug,
+                wiki_root=wiki_root,
+                author=acting_author,
+                author_kind=acting_kind,
+                processor=processor,
+                remove_source_path=None,
+                preclassified_label=label,
+            )
+        _record_direct_inbox_status_if_applicable(
+            wiki_root,
+            source=placeholder,
+            status="oversized",
+            classified_as="oversized",
+            author=acting_author,
+            author_kind=acting_kind,
+        )
+        raise IngestError("oversized source exceeds the 50MB Phase 1 ingest cap")
+
+    source = _read_source(source_ref)
     if len(source.content) > MAX_INGEST_BYTES:
         _record_direct_inbox_status_if_applicable(
             wiki_root,
@@ -598,7 +675,12 @@ def _ingest_source_content_locked(
     preclassified_label: ClassLabel | None = None,
 ) -> IngestResult:
     label = preclassified_label or classify_source(source.name, source.content, wiki_root=wiki_root)
-    digest = hashlib.sha256(source.content).hexdigest()
+    is_large = source.local_path is not None
+    if is_large:
+        assert source.local_path is not None
+        digest, _streamed_size = media.sha256_stream(source.local_path)
+    else:
+        digest = hashlib.sha256(source.content).hexdigest()
     now = _utc_now()
     today = now[:10]
     existing_pages = tuple(_existing_pages(wiki_root))
@@ -608,16 +690,30 @@ def _ingest_source_content_locked(
         return version_plan_or_skip
     version_plan = version_plan_or_skip
 
+    keep_originals = media.keep_originals_mode(_media_settings()) if is_large else "snapshot"
     source_slug = _source_slug(source.name, source.text)
-    raw_relpath = _unique_raw_relpath(
-        wiki_root,
-        label=label.name,
-        today=today,
-        version=version_plan.version,
-        slug=source_slug,
-        suffix=source.suffix,
-    )
+    if is_large and keep_originals != "all":
+        raw_relpath = _unique_relpath(
+            wiki_root,
+            f"{media.LARGE_MEDIA_REL}/{today}-v{version_plan.version}-{source_slug}"
+            f"{source.suffix if source.suffix.startswith('.') else '.' + source.suffix}",
+        )
+    else:
+        raw_relpath = _unique_raw_relpath(
+            wiki_root,
+            label=label.name,
+            today=today,
+            version=version_plan.version,
+            slug=source_slug,
+            suffix=source.suffix,
+        )
     source_page_id = _unique_page_id(wiki_root, f"sources/{today}-{source_slug}")
+    source_stem = source_page_id.split("/")[-1]
+    manifest_relpath = (
+        f"derived/{label.name}/{source_stem}/{media.MANIFEST_FILENAME}"
+        if label.name in media.MEDIA_LABELS
+        else ""
+    )
     request = ProcessRequest(
         source_ref=source_ref,
         source_bytes=source.content,
@@ -631,9 +727,12 @@ def _ingest_source_content_locked(
         existing_pages=existing_pages,
         now=now,
         today=today,
+        manifest_relpath=manifest_relpath,
     )
     selected_processor = (
-        processor or _trusted_processor_for_label(wiki_root, label.name) or DefaultProcessor()
+        processor
+        or _trusted_processor_for_label(wiki_root, label.name)
+        or _builtin_processor_for_label(label.name)
     )
 
     try:
@@ -653,11 +752,23 @@ def _ingest_source_content_locked(
             author_kind=author_kind,
             remove_source_path=remove_source_path,
             version_plan=version_plan,
+            keep_originals=keep_originals,
         )
     except Exception as exc:
         if isinstance(exc, IngestError):
             raise
         raise IngestError(str(exc)) from exc
+
+
+def _media_settings() -> dict[str, Any]:
+    """Resolve the ``wiki:`` config section for media policies (fail-safe)."""
+
+    try:
+        from hermes_wiki.visibility import _wiki_config
+
+        return dict(_wiki_config())
+    except Exception:
+        return {}
 
 
 def search_wiki(
@@ -874,6 +985,7 @@ def _materialize_ingest(
     author_kind: str,
     version_plan: _SourceVersionPlan,
     remove_source_path: Path | None = None,
+    keep_originals: str = "snapshot",
 ) -> IngestResult:
     touched: dict[Path, bytes | None] = {}
     wiki_db = wiki_root / "wiki.db"
@@ -890,7 +1002,43 @@ def _materialize_ingest(
     source_id = request.snapshot_relpath
     try:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_path.write_bytes(source.content)
+        if source.local_path is not None:
+            # Two-tier media path (D4): stream-copy the original unless the
+            # keep_originals policy is "none" (sha-only witness). "all" routes
+            # to the tracked raw/<label>/ tree via the chosen snapshot_relpath;
+            # "local" lands under the gitignored raw/large/.
+            if keep_originals != "none":
+                media.copy_stream(source.local_path, raw_path)
+            git_ops.ensure_gitignore(wiki_root)
+        else:
+            raw_path.write_bytes(source.content)
+        if request.manifest_relpath:
+            manifest_path = wiki_root / request.manifest_relpath
+            _remember(touched, manifest_path)
+            media.write_manifest(
+                manifest_path.parent,
+                media.DerivedManifest(
+                    tool="hermes-wiki.media-stub",
+                    version=media.package_version(),
+                    input_sha256=digest,
+                    input_size=(
+                        source.size if source.size is not None else len(source.content)
+                    ),
+                    source_ref=source.ref,
+                    created=now,
+                    model_id=None,
+                    details={
+                        "label": label.name,
+                        "storage": "large" if source.local_path is not None else "snapshot",
+                        "keep_originals": keep_originals,
+                        "original": (
+                            None
+                            if (source.local_path is not None and keep_originals == "none")
+                            else request.snapshot_relpath
+                        ),
+                    },
+                ),
+            )
         if remove_source_path is not None and remove_source_path.resolve() != raw_path.resolve():
             remove_source_path.unlink()
         for generated in planned_pages:
@@ -1108,6 +1256,29 @@ class _SourceContent:
     content: bytes
     text: str
     url: str | None
+    #: Set for large local media handled by the two-tier path (D4): the bytes
+    #: are never loaded into memory; ``content`` stays empty.
+    local_path: Path | None = None
+    size: int | None = None
+
+
+def _local_source_path(source_ref: str) -> Path | None:
+    """Resolve ``source_ref`` to an existing local file path (URLs -> None)."""
+
+    parsed = urlparse(source_ref)
+    if parsed.scheme in {"http", "https"}:
+        return None
+    if parsed.scheme and parsed.scheme != "file":
+        return None
+    path = Path(parsed.path if parsed.scheme == "file" else source_ref).expanduser()
+    return path if path.is_file() else None
+
+
+def _head_bytes(path: Path, limit: int = 65536) -> bytes:
+    """First ``limit`` bytes for magic-byte classification of large files."""
+
+    with Path(path).open("rb") as handle:
+        return handle.read(limit)
 
 
 def _read_source(source_ref: str) -> _SourceContent:
@@ -1512,6 +1683,22 @@ def _derived_page_body(title: str, request: ProcessRequest) -> str:
             _summary_sentence(request.source_text),
         ]
     )
+
+
+def _media_source_body(request: ProcessRequest) -> str:
+    """Provenance-first body for binary media sources (no decoded text)."""
+
+    lines = [
+        f"# {request.title}",
+        "",
+        "Binary media Source Snapshot; extraction pending a modality processor.",
+        "",
+        f"- Classification: `{request.label.name}` ({request.label.confidence})",
+    ]
+    if request.manifest_relpath:
+        lines.append(f"- Provenance: [Derived Manifest](../{request.manifest_relpath})")
+    lines.append(f"- Original: `{request.snapshot_relpath}`")
+    return "\n".join(lines)
 
 
 def _derived_page_title_and_type(request: ProcessRequest) -> tuple[str, str]:
