@@ -118,7 +118,7 @@ _Avoid_: wiki, knowledge base
 Resolved: "Wiki" means the curated knowledge base. "Hermes Wiki Plugin" means the Hermes integration that lets agents and humans create, search, ingest into, and manage Wikis.
 
 **Karpathy Pattern vs literal implementation**:
-Resolved: Hermes adopts the Karpathy Pattern conceptually. Hermes keeps standard markdown links, SQLite search, and plugin Surfaces rather than copying Obsidian compatibility, wikilinks, or the bundled `llm-wiki` skill literally.
+Resolved: Hermes adopts the Karpathy Pattern conceptually. Hermes keeps standard markdown links, SQLite search, and plugin Surfaces rather than copying Obsidian compatibility or wikilink syntax. The bundled `llm-wiki` skill is split by layer: its mechanics (wikilinks, Obsidian conventions, `^[...]` provenance-marker syntax) are rejected with the above, while its architecture-neutral quality protocols (page-creation threshold, contradiction handling, provenance expectations) are adopted and ported into the wiki skills — see `docs/quality-audit.md` (F1, Prior Art).
 
 **Wiki content vs database state**:
 Resolved: Raw Sources and Wiki Pages are authoritative. Database-backed views are Projections; if a Projection disagrees with Wiki content, the Projection is repaired or rebuilt, with Projection Version history preserved for triage.
