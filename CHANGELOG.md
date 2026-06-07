@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.8.0...v0.9.0) (2026-06-07)
+
+
+### Features
+
+* video modality — scene keyframes + transcript composition (design PR4) ([681628e](https://github.com/tjboudreaux/hermes-wiki/commit/681628ef98e41191e6ad7665cd62ed388c172970))
+* **video:** scene keyframes + audio-track transcription composition ([4dca86b](https://github.com/tjboudreaux/hermes-wiki/commit/4dca86b3cd25dbc408821ced24c1e6cf83bfd9fa))
+
 ## [0.8.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.7.0...v0.8.0) (2026-06-07)
 
 
