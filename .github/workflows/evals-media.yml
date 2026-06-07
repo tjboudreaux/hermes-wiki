@@ -1,0 +1,31 @@
+name: Media Evals
+
+# Real-extraction media evals (D5 'eval_media' lane): heavier deps and
+# threshold-gated tool output, so they run weekly and on demand — never on PRs.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  eval-media:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install project (media extras land per modality phase)
+        run: uv sync
+
+      - name: Run media evals
+        run: uv run pytest -m eval_media -v

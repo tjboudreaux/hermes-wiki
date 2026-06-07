@@ -34,11 +34,12 @@ dev = [
 packages = ["hermes_wiki", "hermes_wiki_cli", "adapters", "fixtures"]
 
 [tool.pytest.ini_options]
-addopts = "-ra -m 'not eval and not eval_llm'"
+addopts = "-ra -m 'not eval and not eval_llm and not eval_media'"
 testpaths = ["tests", "evals"]
 markers = [
   "eval: deterministic quality evals (structural, retrieval, graph); run with -m eval",
   "eval_llm: LLM-judge content evals; scheduled runs only, requires judge API key",
+  "eval_media: real-extraction media evals (heavy deps); weekly + pre-release runs",
 ]
 
 [tool.ruff]

@@ -1,0 +1,27 @@
+{
+  "chart.png": {
+    "label": "image",
+    "sha256": "ee57e9e93a8ed97e1432bccc16c2df78fa516bf5faf29c59a9cc3eadf9c3a450",
+    "size": 7858
+  },
+  "clip.mp4": {
+    "label": "video",
+    "sha256": "dbd9c3bcfaf575e1e5b6f9446df3f6705b34f9f629011b40b3943aecc67124bf",
+    "size": 18158
+  },
+  "post.html": {
+    "label": "article",
+    "sha256": "063380119299cd43deb3a6c7d87105d82ab00c78309f4de9ca60e401c0bed928",
+    "size": 393
+  },
+  "speech-tone.wav": {
+    "label": "audio",
+    "sha256": "1c69b9f9a837d6aa0726c91608ca3837c6cd04ed648bea40aff8b7cb47524acc",
+    "size": 48044
+  },
+  "two-page.pdf": {
+    "label": "paper",
+    "sha256": "ab2c811837b5a6b0e1c89b94f3afe95cc7094b59fa195b75588cebf1853e8742",
+    "size": 891
+  }
+}
