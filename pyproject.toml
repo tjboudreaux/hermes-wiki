@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 pdf = ["pdfplumber>=0.11.9,<0.12"]
 image = ["Pillow>=10.0"]
+audio = ["faster-whisper>=1.0,<2.0"]
 
 [project.scripts]
 hermes-wiki = "hermes_wiki_cli.cli:main"

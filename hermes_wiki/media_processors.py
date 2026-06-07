@@ -10,8 +10,10 @@ from __future__ import annotations
 import importlib.metadata
 import importlib.util
 import io
+from collections.abc import Callable
 from typing import Any
 
+from hermes_wiki import media
 from hermes_wiki.models import WikiPage
 from hermes_wiki.pipeline import (
     DefaultProcessor,
@@ -22,6 +24,136 @@ from hermes_wiki.pipeline import (
 
 PDF_TOOL = "pdfplumber"
 IMAGE_TOOL = "pillow"
+AUDIO_TOOL = "faster-whisper"
+
+#: (start_seconds, end_seconds, text) transcription segments.
+TranscriptSegments = list[tuple[float, float, str]]
+
+
+def audio_processor_or_none() -> AudioProcessor | None:
+    """Return the audio processor when faster-whisper is installed (D3)."""
+
+    if importlib.util.find_spec("faster_whisper") is None:
+        return None
+    return AudioProcessor()
+
+
+def _default_transcribe(
+    source_bytes: bytes,
+    source_local_path: str,
+    model_name: str,
+) -> tuple[TranscriptSegments, str]:
+    """faster-whisper CPU transcription (int8, greedy) over bytes or a path."""
+
+    from faster_whisper import WhisperModel  # ty: ignore[unresolved-import]
+
+    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    audio: Any = source_local_path if source_local_path else io.BytesIO(source_bytes)
+    raw_segments, _info = model.transcribe(audio, beam_size=1, temperature=0.0)
+    segments: TranscriptSegments = [
+        (float(segment.start), float(segment.end), str(segment.text).strip())
+        for segment in raw_segments
+    ]
+    return segments, importlib.metadata.version("faster-whisper")
+
+
+class AudioProcessor:
+    """Whisper-family transcription for ``audio`` sources (design PR3).
+
+    Produces ``transcript.md`` with ``## [hh:mm:ss]`` anchor headings (D7) and
+    a source page citing the manifest. The transcriber is injectable so unit
+    tests and extractor-replay evals stay deterministic; the default uses
+    faster-whisper (CPU/int8, greedy) with the model name from
+    ``wiki.media.transcribe_model`` stamped into the manifest as model_id.
+    Diarization (speaker labels, DER gates) is the documented
+    ``[audio-diarize]`` upgrade path.
+    """
+
+    def __init__(
+        self,
+        transcribe: Callable[[bytes, str, str], tuple[TranscriptSegments, str]] | None = None,
+    ) -> None:
+        self._transcribe = transcribe or _default_transcribe
+
+    def process(self, request: ProcessRequest) -> list[GeneratedPage | DerivedArtifact]:
+        from hermes_wiki.pipeline import MediaStubProcessor, _media_settings
+
+        model_name = media.transcribe_model(_media_settings())
+        try:
+            segments, version = self._transcribe(
+                request.source_bytes, request.source_local_path, model_name
+            )
+        except Exception:
+            return MediaStubProcessor().process(request)
+
+        duration = segments[-1][1] if segments else 0.0
+        source_page = WikiPage(
+            id=request.source_page_id,
+            title=request.title,
+            type="source",
+            body=_audio_source_body(request, segments, duration),
+            tags=("ingest", request.label.name),
+            sources=(request.manifest_relpath or request.snapshot_relpath,),
+            confidence=request.label.confidence,
+        )
+        return [
+            DerivedArtifact(
+                relpath="transcript.md",
+                content=_render_transcript(request.title, model_name, segments),
+                tool=AUDIO_TOOL,
+                version=version,
+                model_id=model_name,
+                details={
+                    "segments": len(segments),
+                    "duration_seconds": round(duration, 2),
+                },
+            ),
+            GeneratedPage(source_page),
+        ]
+
+
+def _timestamp(seconds: float) -> str:
+    total = int(seconds)
+    return f"{total // 3600:02d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+
+
+def _render_transcript(title: str, model_name: str, segments: TranscriptSegments) -> str:
+    """Render the transcript with ``## [hh:mm:ss]`` anchor headings (D7)."""
+
+    lines = [f"# Transcript: {title}", "", f"- Model: {AUDIO_TOOL} {model_name}", ""]
+    if not segments:
+        lines.extend(["*(no speech detected)*", ""])
+    for start, _end, text in segments:
+        lines.extend([f"## [{_timestamp(start)}]", "", text or "*(inaudible)*", ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _audio_source_body(
+    request: ProcessRequest,
+    segments: TranscriptSegments,
+    duration: float,
+) -> str:
+    base = request.manifest_relpath.rsplit("/", 1)[0] if request.manifest_relpath else ""
+    transcript_rel = f"{base}/transcript.md" if base else "transcript.md"
+    summary = next((text for _start, _end, text in segments if text), "")
+    summary = " ".join(summary.split())[:280]
+    lines = [
+        f"# {request.title}",
+        "",
+        f"Audio source; transcribed to [transcript.md](../{transcript_rel}) "
+        f"({len(segments)} segments, ~{_timestamp(duration)}).",
+        "",
+        f"- Classification: `{request.label.name}` ({request.label.confidence})",
+    ]
+    if request.manifest_relpath:
+        lines.append(f"- Provenance: [Derived Manifest](../{request.manifest_relpath})")
+    lines.append(
+        "- Cite moments via transcript anchors: "
+        f"`([source @ mm:ss](../{transcript_rel}#hhmmss))`"
+    )
+    if summary:
+        lines.extend(["", summary])
+    return "\n".join(lines)
 
 
 def image_processor_or_none() -> ImageProcessor | None:
@@ -270,10 +402,13 @@ def _pdf_source_body(
 
 
 __all__ = [
+    "AUDIO_TOOL",
     "IMAGE_TOOL",
     "PDF_TOOL",
+    "AudioProcessor",
     "ImageProcessor",
     "PdfProcessor",
+    "audio_processor_or_none",
     "image_processor_or_none",
     "pdf_processor_or_none",
 ]

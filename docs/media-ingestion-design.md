@@ -138,6 +138,8 @@ Each PR lands **evals-first** with its lane gates.
 | Modality | Tool | License | Eval metric | Verification |
 |---|---|---|---|---|
 | Audio/video ASR | WhisperX (faster-whisper + wav2vec2 alignment + pyannote VAD/diarization) | BSD-2 | jiwer WER/CER (Apache-2.0); pyannote.metrics DER | 3-0 ×4 claims |
+
+> **PR3 adaptation (2026-06-07)**: the shipped `[audio]` extra pins **faster-whisper alone** (MIT, CTranslate2 — no torch; PyAV bundles ffmpeg). Its native segment timestamps satisfy the D7 anchors; WhisperX's additional value (forced alignment + pyannote diarization) drags the torch stack and HF-gated models, so it becomes the documented `[audio-diarize]` upgrade path where DER gates land. The `eval_media` WER threshold gate is deferred until a properly-licensed CC0 *speech* fixture joins the corpus (the generated tone can only smoke-test the transcription path) — tracked in `evals/corpus/media/LICENSES.md`.
 | Video scenes | PySceneDetect (Content/Threshold/Adaptive/Histogram detectors) | BSD | scene-count exact | 3-0 ×3 |
 | Image captions | via auxiliary vision router | — | FaithScore (reference-free claim decomposition) + CLIPScore (secondary) | 3-0 ×4 |
 | PDF | bake-off winner (docling prior) | MIT/Apache only | OmniDocBench-slice + golden edit-distance | benchmark 3-0; tools unverified |

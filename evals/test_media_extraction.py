@@ -54,3 +54,46 @@ def test_image_metadata_extraction_gate() -> None:
     with Image.open(io.BytesIO(data)) as img:
         assert img.size == (64, 64)
         assert str(img.format).lower() == "png"
+
+
+def test_audio_transcription_smoke_gate(tmp_path: Path) -> None:
+    """Weekly lane: real faster-whisper (tiny) runs end-to-end over the corpus.
+
+    The corpus tone has no speech, so this gates the transcription *path*
+    (model load, decode, artifact shape) rather than WER. A WER threshold gate
+    lands when a properly-licensed CC0 speech fixture is added (LICENSES.md).
+    """
+
+    pytest.importorskip("faster_whisper")
+
+    import os
+
+    from hermes_wiki import media, pipeline
+    from hermes_wiki_cli.cli import main
+
+    merged = {"HERMES_HOME": str(tmp_path), "HERMES_WIKI": "media-eval", "USER": "eval"}
+    old = os.environ.copy()
+    try:
+        os.environ.clear()
+        os.environ.update(merged)
+        (tmp_path / "config.yaml").write_text(
+            "wiki:\n  media:\n    transcribe_model: tiny\n", encoding="utf-8"
+        )
+        assert main(["create", "media-eval"]) == 0
+        result = pipeline.ingest_source(
+            str(CORPUS / "sources" / "speech-tone.wav"), wiki="media-eval"
+        )
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
+
+    wiki_root = tmp_path / "wikis" / "media-eval"
+    stem = result.pages_created[0].split("/")[-1]
+    manifest = media.read_manifest(wiki_root / "derived" / "audio" / stem)
+    assert manifest is not None
+    assert manifest.tool == "faster-whisper"
+    assert manifest.model_id == "tiny"
+    transcript = (wiki_root / "derived" / "audio" / stem / "transcript.md").read_text(
+        encoding="utf-8"
+    )
+    assert transcript.startswith("# Transcript:")

@@ -61,8 +61,8 @@ class MediaRequirement:
 #: modality phases; binaries that gate them are declared here so preflights
 #: and ``needs-deps`` statuses stay in one place.
 MEDIA_REQUIREMENTS: dict[str, tuple[MediaRequirement, ...]] = {
-    "image": (),
-    "audio": (MediaRequirement("binary", "ffmpeg", "brew install ffmpeg | apt install ffmpeg"),),
+    "image": (),  # Pillow is an optional enhancement; the stub page works without it
+    "audio": (MediaRequirement("python", "faster_whisper", "hermes-wiki[audio]"),),
     "video": (MediaRequirement("binary", "ffmpeg", "brew install ffmpeg | apt install ffmpeg"),),
 }
 
@@ -158,6 +158,21 @@ def copy_stream(source: Path, destination: Path) -> None:
         shutil.copyfileobj(src, dst, _STREAM_CHUNK)
 
 
+DEFAULT_TRANSCRIBE_MODEL = "base"
+
+
+def transcribe_model(config: dict[str, Any] | None) -> str:
+    """Resolve ``wiki.media.transcribe_model`` (Whisper model name)."""
+
+    if isinstance(config, dict):
+        media_cfg = config.get("media")
+        if isinstance(media_cfg, dict):
+            name = str(media_cfg.get("transcribe_model") or "").strip()
+            if name:
+                return name
+    return DEFAULT_TRANSCRIBE_MODEL
+
+
 def keep_originals_mode(config: dict[str, Any] | None) -> str:
     """Resolve the ``wiki.media.keep_originals`` policy from a config mapping."""
 
@@ -198,6 +213,7 @@ def needs_deps_status(missing: list[MediaRequirement]) -> str:
 
 __all__ = [
     "DEFAULT_KEEP_ORIGINALS",
+    "DEFAULT_TRANSCRIBE_MODEL",
     "KEEP_ORIGINALS_MODES",
     "LARGE_MEDIA_REL",
     "MANIFEST_FILENAME",
@@ -215,5 +231,6 @@ __all__ = [
     "package_version",
     "read_manifest",
     "sha256_stream",
+    "transcribe_model",
     "write_manifest",
 ]
