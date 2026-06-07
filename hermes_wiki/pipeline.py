@@ -80,6 +80,9 @@ class ProcessRequest:
     today: str
     #: Relative path of the derived-artifact manifest for media labels ("" otherwise).
     manifest_relpath: str = ""
+    #: Absolute path of a large local original (two-tier path); ``source_bytes``
+    #: is empty in that case and extractors must stream from this path.
+    source_local_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +218,12 @@ class MediaStubProcessor:
 
 
 def _builtin_processor_for_label(label_name: str) -> Processor:
+    if label_name == "audio":
+        from hermes_wiki.media_processors import audio_processor_or_none
+
+        audio_processor = audio_processor_or_none()
+        if audio_processor is not None:
+            return audio_processor
     if label_name == "image":
         from hermes_wiki.media_processors import image_processor_or_none
 
@@ -758,6 +767,7 @@ def _ingest_source_content_locked(
         now=now,
         today=today,
         manifest_relpath=manifest_relpath,
+        source_local_path=str(source.local_path) if source.local_path is not None else "",
     )
     selected_processor = (
         processor

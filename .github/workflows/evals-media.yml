@@ -24,8 +24,8 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Install project (media extras land per modality phase)
-        run: uv sync
+      - name: Install project with media extras
+        run: uv sync --extra pdf --extra image --extra audio
 
       - name: Run media evals
         run: uv run pytest -m eval_media -v
