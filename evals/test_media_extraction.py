@@ -97,3 +97,24 @@ def test_audio_transcription_smoke_gate(tmp_path: Path) -> None:
         encoding="utf-8"
     )
     assert transcript.startswith("# Transcript:")
+
+
+def test_video_scene_detection_gate() -> None:
+    """Weekly lane: PySceneDetect over the corpus clip stays pinned (PR4).
+
+    The testsrc clip is continuous (no cuts), so the contract is exactly one
+    scene-start keyframe at t=0 with valid JPEG bytes.
+    """
+
+    pytest.importorskip("scenedetect")
+    pytest.importorskip("cv2")
+
+    from hermes_wiki.media_processors import _default_detect_scenes
+
+    data = (CORPUS / "sources" / "clip.mp4").read_bytes()
+    frames, version = _default_detect_scenes(data, "", 24)
+    assert version
+    assert len(frames) == 1
+    start, jpeg = frames[0]
+    assert start == 0.0
+    assert jpeg.startswith(b"\xff\xd8\xff")

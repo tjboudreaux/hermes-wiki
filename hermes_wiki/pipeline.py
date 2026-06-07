@@ -218,6 +218,12 @@ class MediaStubProcessor:
 
 
 def _builtin_processor_for_label(label_name: str) -> Processor:
+    if label_name == "video":
+        from hermes_wiki.media_processors import video_processor_or_none
+
+        video_processor = video_processor_or_none()
+        if video_processor is not None:
+            return video_processor
     if label_name == "audio":
         from hermes_wiki.media_processors import audio_processor_or_none
 
