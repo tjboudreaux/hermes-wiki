@@ -5,7 +5,7 @@ from __future__ import annotations
 try:
     from importlib.metadata import version
 except ImportError:  # pragma: no cover - Python 3.11+ always has importlib.metadata
-    __version__ = "0.6.0"
+    __version__ = "0.7.0"
 else:
     try:
         __version__ = version("hermes-wiki")
