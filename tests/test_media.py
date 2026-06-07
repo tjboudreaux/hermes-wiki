@@ -75,7 +75,7 @@ def test_keep_originals_mode_resolution() -> None:
 
 
 def test_missing_dependencies_and_status_rendering() -> None:
-    registry = {
+    registry: dict[str, tuple[MediaRequirement, ...]] = {
         "audio": (
             MediaRequirement("binary", "definitely-not-a-binary-xyz", "brew install x"),
             MediaRequirement("python", "definitely_not_a_module_xyz", "hermes-wiki[audio]"),
