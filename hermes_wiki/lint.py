@@ -317,6 +317,7 @@ def _page_content_findings(
     findings: list[dict[str, Any]] = []
     existing_files = {page["path"].resolve() for page in pages}
     link_counts = {page["id"]: 0 for page in pages if page["id"]}
+    resolved_root = wiki_root.resolve()
     for page in pages:
         for target in _markdown_links(page["body"]):
             if _is_external_or_anchor(target):
@@ -328,7 +329,7 @@ def _page_content_findings(
             # inside the wiki root, so do not flag links to them as broken/orphaned.
             if resolved_target not in existing_files and resolved_target.is_file():
                 try:
-                    resolved_target.relative_to(wiki_root.resolve())
+                    resolved_target.relative_to(resolved_root)
                 except ValueError:
                     pass
                 else:
@@ -345,7 +346,7 @@ def _page_content_findings(
                     )
                 )
                 continue
-            target_id = resolved_target.relative_to(wiki_root).with_suffix("").as_posix()
+            target_id = resolved_target.relative_to(resolved_root).with_suffix("").as_posix()
             link_counts[target_id] = link_counts.get(target_id, 0) + 1
 
     for page in pages:
@@ -369,6 +370,19 @@ def _page_content_findings(
                     f"page {page['id']} has factual content but no source citations",
                     page_id=page["id"],
                     path=page["rel_path"],
+                )
+            )
+        for citation in _string_list(page["metadata"].get("sources")):
+            if _citation_resolves(resolved_root, citation, link_counts):
+                continue
+            findings.append(
+                _finding(
+                    "unresolved_citation",
+                    "high",
+                    f"page {page['id']} cites unresolved source {citation}",
+                    page_id=page["id"],
+                    path=page["rel_path"],
+                    citation=citation,
                 )
             )
         stale_marker = _stale_unverified_marker(page["body"])
@@ -638,7 +652,10 @@ def _dangling_kanban_findings(
         try:
             task = read_task(task_id)
         except KanbanUnavailableError:
-            return []
+            # Kanban became unreachable mid-scan: keep the dangling refs that
+            # were already confirmed while it was reachable; skip the rest
+            # (unreachable does not mean dangling).
+            return findings
         if task is not None:
             continue
         findings.append(
@@ -808,6 +825,34 @@ def _is_external_or_anchor(target: str) -> bool:
 def _has_factual_body(body: str) -> bool:
     text = re.sub(r"^#.*$", "", body, flags=re.MULTILINE).strip()
     return bool(re.search(r"[A-Za-z]{3,}", text))
+
+
+def _citation_resolves(
+    resolved_root: Path,
+    citation: Any,
+    page_ids: dict[str, int] | set[str],
+) -> bool:
+    """True when a ``sources:`` entry points at a real page or wiki-local file.
+
+    External URLs are provenance recorded elsewhere (``sources`` table), not
+    local references, so they are out of scope for this check.
+    """
+
+    target = str(citation).strip()
+    if not target:
+        return False
+    if re.match(r"^[a-z][a-z0-9+.-]*://", target):
+        return True
+    if target in page_ids:
+        return True
+    candidate = (resolved_root / target).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
+        return False
+    if candidate.is_file():
+        return True
+    return candidate.suffix == "" and candidate.with_suffix(".md").is_file()
 
 
 def _stale_unverified_marker(body: str) -> str | None:

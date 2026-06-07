@@ -1,0 +1,40 @@
+[
+  {
+    "skills": ["wiki-writing"],
+    "query": "Ingest this article and write the derived concept page.",
+    "files": [
+      "fixtures/sources/agent-memory-article.md"
+    ],
+    "expected_behavior": [
+      "Every claim on the generated page is traceable to the cited source page — no facts invented beyond what the article supports",
+      "The sources: frontmatter references the real source page created by ingestion",
+      "Summary statements paraphrase the source accurately; quantitative or named claims match the source exactly"
+    ]
+  },
+  {
+    "skills": ["wiki-writing"],
+    "query": "Write a summary page synthesizing the three sources on memory retrieval and modular architectures already ingested into this wiki.",
+    "files": [
+      "evals/corpus/dedup-threshold/sources/alpha-architectures.md",
+      "evals/corpus/dedup-threshold/sources/beta-survey.md",
+      "evals/corpus/multi-source-contradiction/sources/memory-benchmarks-2026-update.md"
+    ],
+    "expected_behavior": [
+      "On this 3+ source synthesis page, paragraphs whose claims come from one specific source end with a relative markdown link to that source page",
+      "All three source pages appear in the sources: frontmatter",
+      "No claim is attributed to a source that does not contain it"
+    ]
+  },
+  {
+    "skills": ["wiki-writing"],
+    "query": "One source makes a speculative claim ('modular memory is becoming the default architecture') based on anecdotal field notes. Write the page.",
+    "files": [
+      "evals/corpus/dedup-threshold/sources/beta-survey.md"
+    ],
+    "expected_behavior": [
+      "Weakly supported claims are hedged in the body ('field reports suggest…') rather than asserted as established fact",
+      "confidence: frontmatter honestly reflects the strength of sourcing (low/medium, not high, for single anecdotal sourcing)",
+      "The page does not upgrade the claim's certainty beyond what the source states"
+    ]
+  }
+]

@@ -1,0 +1,10 @@
+# Qrels for the dedup-threshold corpus wiki. Relevant ids use only undated
+# derived pages so judgments stay deterministic across ingest dates.
+queries:
+  - q: "modular memory"
+    relevant:
+      - concepts/survey-of-modular-memory-architectures
+      - entities/field-notes-memory-systems-in-production-agents
+  - q: "production agents"
+    relevant:
+      - entities/field-notes-memory-systems-in-production-agents

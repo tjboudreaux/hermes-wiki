@@ -1,12 +1,14 @@
 ---
 name: wiki-ingestion
 description: "Ingest sources into a Hermes LLM Wiki: classify articles/papers/transcripts, manage the raw inbox, snapshot sources append-only, and handle oversized or unknown files."
-version: 1.0.0
+version: 1.1.0
 license: MIT
 metadata:
   hermes:
     tags: [Wiki, Ingestion, Knowledge]
     related_skills: [wiki-commands, wiki-writing]
+    upstream_skill: research-llm-wiki
+    upstream_skill_version: "2.1.0"
 ---
 
 # Hermes Wiki Ingestion
@@ -88,6 +90,19 @@ hermes wiki plugins trust classifier <name>
 
 Trust is recorded canonically in `SCHEMA.md` (path + sha256) — editing the file
 after trusting silently disables it until re-trusted.
+
+## Synthesis guidance
+
+When expanding ingestion-derived pages (or writing new ones from ingested
+sources), apply the synthesis protocol from the `wiki-writing` skill:
+
+- **Page-creation threshold**: derive pages for entities/concepts that appear
+  in 2+ sources or are central to this one — never for passing mentions.
+- **Drift means review**: when re-ingest reports `drift_detected`, review
+  pages whose `sources:` cite the superseded snapshot. Newer content
+  generally supersedes; genuine conflicts follow the contradiction protocol
+  (`contested: true` + `contradictions:` frontmatter). Raw snapshots stay
+  append-only — only wiki pages are updated.
 
 ## Rules
 

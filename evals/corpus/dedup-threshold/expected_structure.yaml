@@ -1,0 +1,22 @@
+# Golden contract for the CURRENT generation path (DefaultProcessor).
+# Page ids embed the ingest date, so id patterns use globs.
+pages:
+  - id: "sources/*-survey-of-modular-memory-architectures"
+    type: source
+    must_cite: ["raw/articles/*-survey-of-modular-memory-architectures.md"]
+  - id: "concepts/survey-of-modular-memory-architectures"
+    type: concept
+    must_cite: ["raw/articles/*-survey-of-modular-memory-architectures.md"]
+    must_link: ["sources/*-survey-of-modular-memory-architectures"]
+  - id: "sources/*-field-notes-memory-systems-in-production-agents"
+    type: source
+    must_cite: ["raw/articles/*-field-notes-memory-systems-in-production-agents.md"]
+  # CQ-1, pinned known-wrong until F2: "Systems" in the title trips the
+  # org-keyword regex in _derived_page_title_and_type, mistyping this
+  # derived page as entity. F2 must flip this expectation to concept.
+  - id: "entities/field-notes-memory-systems-in-production-agents"
+    type: entity
+    must_link: ["sources/*-field-notes-memory-systems-in-production-agents"]
+# Fresh DefaultProcessor wikis lint at 0.84: each derived page is an orphan
+# (medium, -0.08 x2). F2/F3 should raise this floor.
+min_health_score: 0.84

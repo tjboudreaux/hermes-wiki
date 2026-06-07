@@ -161,7 +161,7 @@ wiki:
 
 ## Health Checks (Lint)
 
-18 automated checks with severity levels:
+19 automated checks with severity levels:
 
 | Severity | Examples |
 |----------|----------|

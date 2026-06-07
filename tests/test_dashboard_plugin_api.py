@@ -639,3 +639,60 @@ def test_inbox_file_invisible_wiki_hidden(
         with pytest.raises(HTTPException) as delete_exc:
             plugin_api.delete_inbox_file_route(slug, "anything.md")
         assert delete_exc.value.status_code == 404
+
+
+class _FakeUpload:
+    """Minimal stand-in for a Starlette UploadFile in a multipart form."""
+
+    def __init__(self, filename: str, content: bytes) -> None:
+        self.filename = filename
+        self._content = content
+
+    async def read(self) -> bytes:
+        return self._content
+
+
+class _FakeMultipartRequest:
+    """Minimal stand-in for a Starlette Request carrying one uploaded file."""
+
+    def __init__(self, form: dict[str, Any]) -> None:
+        self.headers = {"content-type": "multipart/form-data; boundary=x"}
+        self._form = form
+
+    async def form(self) -> dict[str, Any]:
+        return self._form
+
+
+def test_multipart_upload_temp_file_is_unlinked_after_ingest(
+    plugin_api: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uploaded-file ingest must not leak its NamedTemporaryFile on disk."""
+
+    monkeypatch.setenv("HERMES_WIKI", "ai-tooling")
+
+    created_paths: list[str] = []
+    real_named_temporary_file = plugin_api.tempfile.NamedTemporaryFile
+
+    def recording_named_temporary_file(*args: Any, **kwargs: Any) -> Any:
+        handle = real_named_temporary_file(*args, **kwargs)
+        created_paths.append(handle.name)
+        return handle
+
+    monkeypatch.setattr(
+        plugin_api.tempfile, "NamedTemporaryFile", recording_named_temporary_file
+    )
+
+    upload = _FakeUpload(
+        "uploaded-note.md",
+        b"# Uploaded Note\n\nDashboard-uploaded source about agent memory hygiene.",
+    )
+    request = _FakeMultipartRequest({"file": upload})
+
+    result = asyncio.run(plugin_api.ingest("ai-tooling", payload=None, request=request))
+
+    assert result["status"] == "ok"
+    assert result["result"]["pages_created"]
+    assert created_paths, "multipart upload should be staged through a temp file"
+    for path in created_paths:
+        assert not Path(path).exists(), f"upload temp file leaked: {path}"

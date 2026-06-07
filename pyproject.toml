@@ -27,14 +27,19 @@ dev = [
   "ruff>=0.15.16",
   "ty==0.0.44",
   "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@main",
+  "pytest-cov>=7.1.0",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["hermes_wiki", "hermes_wiki_cli", "adapters", "fixtures"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
-testpaths = ["tests"]
+addopts = "-ra -m 'not eval and not eval_llm'"
+testpaths = ["tests", "evals"]
+markers = [
+  "eval: deterministic quality evals (structural, retrieval, graph); run with -m eval",
+  "eval_llm: LLM-judge content evals; scheduled runs only, requires judge API key",
+]
 
 [tool.ruff]
 line-length = 100
@@ -63,6 +68,7 @@ include = [
   "hermes_wiki",
   "hermes_wiki_cli",
   "adapters",
+  "evals",
   "fixtures",
   "tests",
 ]

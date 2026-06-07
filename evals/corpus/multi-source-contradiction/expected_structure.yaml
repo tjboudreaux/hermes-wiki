@@ -1,0 +1,15 @@
+# Golden contract for the CURRENT generation path (DefaultProcessor).
+pages:
+  - id: "sources/*-memory-retrieval-benchmark-results-2025-09"
+    type: source
+    must_cite: ["raw/articles/*-memory-retrieval-benchmark-results-2025-09.md"]
+  - id: "concepts/memory-retrieval-benchmark-results-2025-09"
+    type: concept
+    must_link: ["sources/*-memory-retrieval-benchmark-results-2025-09"]
+  - id: "sources/*-memory-retrieval-benchmark-update-2026-04"
+    type: source
+    must_cite: ["raw/articles/*-memory-retrieval-benchmark-update-2026-04.md"]
+  - id: "concepts/memory-retrieval-benchmark-update-2026-04"
+    type: concept
+    must_link: ["sources/*-memory-retrieval-benchmark-update-2026-04"]
+min_health_score: 0.84

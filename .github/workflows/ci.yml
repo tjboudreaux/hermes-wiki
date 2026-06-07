@@ -33,8 +33,14 @@ jobs:
       - name: Type check
         run: uv run ty check
 
-      - name: Test
-        run: uv run pytest
+      - name: Test (with coverage floor)
+        run: >
+          uv run pytest
+          --cov=hermes_wiki --cov=hermes_wiki_cli --cov=adapters
+          --cov-report=term --cov-fail-under=84
+
+      - name: Quality evals (deterministic)
+        run: uv run pytest -m eval
 
   dashboard:
     runs-on: ubuntu-latest

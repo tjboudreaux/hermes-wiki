@@ -104,6 +104,12 @@ def initialize_registry(conn: sqlite3.Connection) -> None:
 def initialize_wiki(conn: sqlite3.Connection) -> None:
     """Create the per-wiki projection schema from ``SPEC.md §3.2``."""
 
+    fts_existed = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pages_fts'"
+        ).fetchone()
+        is not None
+    )
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS pages (
@@ -231,7 +237,13 @@ def initialize_wiki(conn: sqlite3.Connection) -> None:
         END;
         """
     )
-    rebuild_pages_fts(conn)
+    # The FTS index is trigger-maintained; a full rebuild is only needed when
+    # pages_fts was just created over a pages table that may already hold rows
+    # (first init or migration). Rebuilding unconditionally taxed every caller
+    # of initialize_wiki — including ensure_projection_current on dashboard
+    # reads — with an O(n) index rebuild.
+    if not fts_existed:
+        rebuild_pages_fts(conn)
 
 
 def rebuild_pages_fts(conn: sqlite3.Connection) -> None:

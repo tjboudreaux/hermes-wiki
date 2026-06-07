@@ -447,6 +447,8 @@ def write_inbox_file(
         raise IngestError("inbox file not found")
     if inbox_path.stat().st_size > MAX_INGEST_BYTES:
         raise InboxFileTooLargeError("oversized inbox files cannot be edited")
+    if len(content.encode("utf-8")) > MAX_INGEST_BYTES:
+        raise InboxFileTooLargeError("edited content exceeds the ingest size limit")
 
     acting_author, acting_kind = resolve_actor(author=author, author_kind=author_kind)
     now = _utc_now()
@@ -1052,11 +1054,23 @@ def _call_custom_processor(process: Any, request: ProcessRequest) -> Any:
         signature = inspect.signature(process)
     except (TypeError, ValueError):
         return process(request)
+    parameters = list(signature.parameters.values())
+    required_keyword_only = [
+        parameter
+        for parameter in parameters
+        if parameter.kind is parameter.KEYWORD_ONLY
+        and parameter.default is inspect.Signature.empty
+    ]
+    if required_keyword_only:
+        names = ", ".join(parameter.name for parameter in required_keyword_only)
+        raise ProcessorError(
+            "trusted processor signature is unsupported: required keyword-only "
+            f"parameter(s) {names}; accept a single ProcessRequest instead"
+        )
     positional = [
         parameter
-        for parameter in signature.parameters.values()
-        if parameter.kind
-        in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
+        for parameter in parameters
+        if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
     ]
     required = [
         parameter

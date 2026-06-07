@@ -1,0 +1,39 @@
+[
+  {
+    "skills": ["wiki-writing", "wiki-ingestion"],
+    "query": "Ingest both sources and synthesize wiki pages for this wiki about agent memory systems.",
+    "files": [
+      "evals/corpus/dedup-threshold/sources/alpha-architectures.md",
+      "evals/corpus/dedup-threshold/sources/beta-survey.md"
+    ],
+    "expected_behavior": [
+      "Creates exactly one concept page for 'Modular Memory' (it appears substantively in 2+ sources), citing both source pages in its sources: frontmatter",
+      "Searches the wiki for existing pages about modular memory before creating, and extends an existing page instead of duplicating if one is found",
+      "Does not create separate near-duplicate pages (e.g., 'Modular Memory' and 'Modular Memory Architectures') for the same subject"
+    ]
+  },
+  {
+    "skills": ["wiki-writing", "wiki-ingestion"],
+    "query": "Ingest this survey and create wiki pages for the entities and concepts it covers.",
+    "files": [
+      "evals/corpus/dedup-threshold/sources/alpha-architectures.md"
+    ],
+    "expected_behavior": [
+      "Does not create a page for 'Acme Labs' — it is a passing mention explicitly not benchmarked in the source",
+      "Creates a page only for subjects central to the source (modular memory architectures)",
+      "Applies the page-creation threshold: 2+ sources OR central to one source"
+    ]
+  },
+  {
+    "skills": ["wiki-writing"],
+    "query": "The wiki already has a page concepts/modular-memory. Synthesize the new source 'beta-survey.md' into the wiki.",
+    "files": [
+      "evals/corpus/dedup-threshold/sources/beta-survey.md"
+    ],
+    "expected_behavior": [
+      "Searches first and finds the existing concepts/modular-memory page",
+      "Updates the existing page with the new source's findings (write-routing drift, freshness policies) rather than creating a duplicate",
+      "Adds the new source page to the existing page's sources: frontmatter and cross-links appropriately"
+    ]
+  }
+]

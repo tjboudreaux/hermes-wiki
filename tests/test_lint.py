@@ -384,3 +384,85 @@ def test_lint_uses_current_resolution_and_denies_archived_without_disclosure(
     captured = capsys.readouterr()
     assert captured.err.strip() == "not found or not visible"
     assert captured.out == ""
+
+
+def test_lint_flags_unresolved_citations(tmp_path: Path, capsys) -> None:
+    """``sources:`` entries must resolve to a page id or a wiki-local file."""
+
+    assert _run_cli(tmp_path, "create", "ai-tooling") == 0
+    wiki_root = tmp_path / "wikis" / "ai-tooling"
+    raw = wiki_root / "raw" / "articles" / "evidence.md"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text("evidence snapshot", encoding="utf-8")
+    _write_page(
+        wiki_root,
+        "sources/2026-06-05-evidence",
+        page_type="source",
+        sources=["raw/articles/evidence.md"],
+    )
+    _write_page(
+        wiki_root,
+        "concepts/cited-ok",
+        sources=["raw/articles/evidence.md", "sources/2026-06-05-evidence"],
+    )
+    _write_page(
+        wiki_root,
+        "concepts/cited-broken",
+        sources=[
+            "raw/articles/never-snapshotted.md",
+            "../outside-the-wiki.md",
+            "https://example.com/external-provenance",
+        ],
+    )
+    _rewrite_index(
+        wiki_root,
+        ["sources/2026-06-05-evidence", "concepts/cited-ok", "concepts/cited-broken"],
+    )
+    _seed_projection(wiki_root)
+    capsys.readouterr()
+
+    _code, report = _lint(tmp_path, capsys, "--wiki", "ai-tooling")
+    unresolved = _checks(report).get("unresolved_citation", [])
+
+    assert {finding["citation"] for finding in unresolved} == {
+        "raw/articles/never-snapshotted.md",
+        "../outside-the-wiki.md",
+    }
+    assert all(finding["page"] == "concepts/cited-broken" for finding in unresolved)
+    assert all(finding["severity"] == "high" for finding in unresolved)
+
+
+def test_dangling_kanban_findings_survive_midloop_unavailability(monkeypatch) -> None:
+    """Findings confirmed before kanban becomes unreachable must be kept."""
+
+    from hermes_wiki import kanban_link, lint
+    from hermes_wiki.kanban_link import KanbanUnavailableError
+
+    calls: list[str] = []
+
+    def fake_read_task(task_id: str):
+        calls.append(task_id)
+        if task_id == "KB-1":
+            return None  # confirmed dangling while kanban was reachable
+        raise KanbanUnavailableError("kanban went away mid-scan")
+
+    monkeypatch.setattr(kanban_link, "read_task", fake_read_task)
+
+    refs = {
+        ("concepts/a", "KB-1", "page->task"),
+        ("concepts/b", "KB-2", "page->task"),
+        ("concepts/c", "KB-3", "page->task"),
+    }
+    findings = lint._dangling_kanban_findings(refs)
+
+    assert calls == ["KB-1", "KB-2"]  # sorted order; scan stops at the failure
+    assert [finding["task_id"] for finding in findings] == ["KB-1"]
+    assert findings[0]["check"] == "dangling_kanban_ref"
+
+    # Kanban down from the very first call: no refs were confirmed, report none.
+    monkeypatch.setattr(
+        kanban_link,
+        "read_task",
+        lambda task_id: (_ for _ in ()).throw(KanbanUnavailableError("down")),
+    )
+    assert lint._dangling_kanban_findings(refs) == []

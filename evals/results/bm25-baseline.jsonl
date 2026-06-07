@@ -1,0 +1,12 @@
+{"k": 5, "metric": "mrr", "scope": "dedup-threshold", "suite": "retrieval", "value": 1.0}
+{"k": 5, "metric": "ndcg_at_5", "scope": "dedup-threshold", "suite": "retrieval", "value": 0.9386}
+{"k": 5, "metric": "precision_at_5", "scope": "dedup-threshold", "suite": "retrieval", "value": 0.3}
+{"k": 5, "metric": "recall_at_5", "scope": "dedup-threshold", "suite": "retrieval", "value": 1.0}
+{"k": 5, "metric": "mrr", "scope": "fixture-home", "suite": "retrieval", "value": 0.8542}
+{"k": 5, "metric": "ndcg_at_5", "scope": "fixture-home", "suite": "retrieval", "value": 0.9002}
+{"k": 5, "metric": "precision_at_5", "scope": "fixture-home", "suite": "retrieval", "value": 0.225}
+{"k": 5, "metric": "recall_at_5", "scope": "fixture-home", "suite": "retrieval", "value": 1.0}
+{"k": 5, "metric": "mrr", "scope": "multi-source-contradiction", "suite": "retrieval", "value": 0.5}
+{"k": 5, "metric": "ndcg_at_5", "scope": "multi-source-contradiction", "suite": "retrieval", "value": 0.6409}
+{"k": 5, "metric": "precision_at_5", "scope": "multi-source-contradiction", "suite": "retrieval", "value": 0.3}
+{"k": 5, "metric": "recall_at_5", "scope": "multi-source-contradiction", "suite": "retrieval", "value": 1.0}
