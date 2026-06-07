@@ -1243,3 +1243,53 @@ def test_write_inbox_file_rejects_oversized_new_content(tmp_path: Path, monkeypa
 
     pipeline.write_inbox_file(wiki="ai-tooling", filename="note.md", content="y" * 32)
     assert inbox_path.read_text(encoding="utf-8") == "y" * 32
+
+
+def _process_request() -> pipeline.ProcessRequest:
+    from hermes_wiki.models import ClassLabel
+
+    return pipeline.ProcessRequest(
+        source_ref="note.md",
+        source_bytes=b"body",
+        source_text="body",
+        title="Note",
+        source_slug="note",
+        label=ClassLabel("article", "medium", "test"),
+        snapshot_relpath="raw/articles/2026-06-07-v1-note.md",
+        source_page_id="sources/2026-06-07-note",
+        source_page_filename="2026-06-07-note.md",
+        existing_pages=(),
+        now="2026-06-07T00:00:00Z",
+        today="2026-06-07",
+    )
+
+
+def test_call_custom_processor_dispatch_handles_keyword_only_params() -> None:
+    """Keyword-only params must not be misread as positional dispatch slots."""
+
+    import pytest
+
+    request = _process_request()
+
+    # Optional keyword-only params keep the modern single-request convention.
+    def modern(req: object, *, verbose: bool = False) -> str:
+        assert req is request
+        return "modern"
+
+    assert pipeline._call_custom_processor(modern, request) == "modern"
+
+    # Legacy two-positional convention still receives (raw_path, label).
+    def legacy(raw_path: object, label: object) -> tuple[object, object]:
+        return raw_path, label
+
+    raw_path, label = pipeline._call_custom_processor(legacy, request)
+    assert Path(str(raw_path)).name == "note.md"
+    assert label is request.label
+
+    # Required keyword-only params can be satisfied by neither convention:
+    # fail with a clear ProcessorError instead of a confusing TypeError.
+    def unsupported(req: object, *, mode: str) -> None:
+        raise AssertionError("must not be called")
+
+    with pytest.raises(pipeline.ProcessorError, match="keyword-only.*mode"):
+        pipeline._call_custom_processor(unsupported, request)
