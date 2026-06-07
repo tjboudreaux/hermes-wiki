@@ -795,6 +795,8 @@ Cron runs set `HERMES_WIKI` in the subprocess env, which grants write access for
 ### Future Phase — Media Processing Skills + Chunking
 **Goal:** safely process files too large or too multimodal for Phase 1 synchronous ingest.
 
+> **Design resolved 2026-06-07** — binding decision record in `docs/media-ingestion-design.md` (architecture split, derived tier, two-tier storage, eval lanes, skill surface, per-modality policies, PR plan).
+
 - Hermes skills for PDFs, video, images, and audio that produce transcripts or decomposed source material
 - Chunking/decomposition strategies for files over 50MB
 - Reprocess `oversized` inbox items once a suitable media skill exists

@@ -372,4 +372,5 @@ This audit **builds on** rather than re-proposes existing designs:
 - **Upstream `research-llm-wiki` skill v2.1.0** ([Hermes Agent bundled skills](https://hermes-agent.nousresearch.com/docs/user-guide/skills/bundled/research/research-llm-wiki)) — F1 ports its dedup/contradiction/provenance protocols rather than authoring new ones; the eval harness and retrieval suites cover what upstream lacks entirely.
 - **Phase 2 hooks** ([hooks-architecture.md](hooks-architecture.md)) — F5 implements the already-designed taxonomy hooks; future lint hooks can host F4-style checks per-wiki.
 - **Pluggable ranker** (SPEC) — the retrieval eval suite (F7 + regression gate) is the precondition this audit adds in front of that extension point; BEIR's finding that BM25 is hard to beat out-of-domain makes the gate non-negotiable.
-- **Media processing / chunking, cross-wiki routing, purge** (SPEC future phases) — out of scope here; nothing in this roadmap conflicts with them.
+- **Media processing / chunking** — designed 2026-06-07; binding decision record in [media-ingestion-design.md](media-ingestion-design.md) (its PR0–6 plan runs alongside this roadmap's Next/Later items).
+- **Cross-wiki routing, purge** (SPEC future phases) — out of scope here; nothing in this roadmap conflicts with them.
