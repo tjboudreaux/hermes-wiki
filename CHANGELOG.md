@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/tjboudreaux/hermes-wiki/compare/v0.4.1...v0.5.0) (2026-06-07)
+
+
+### Features
+
+* **classifiers:** built-in image/audio/video detection ([f9e6fb3](https://github.com/tjboudreaux/hermes-wiki/commit/f9e6fb35fc1b304ca407d35dea360916cd4e82d7))
+* **evals:** media micro-corpus, plumbing lane, and eval_media skeleton ([aaee4ca](https://github.com/tjboudreaux/hermes-wiki/commit/aaee4ca45fef16d6aad4c0ac1b57496ebc297187))
+* media ingestion foundations (design PR0) ([9f1457f](https://github.com/tjboudreaux/hermes-wiki/commit/9f1457fc1e5cfd11fd806b4dc26fb08dd271989a))
+* **media:** foundations module — manifests, storage tiers, preflights ([5bef9aa](https://github.com/tjboudreaux/hermes-wiki/commit/5bef9aa315c73268ec16a787ceb8f828d7925db5))
+* **pipeline:** two-tier media ingest, stub processor, provenance manifests ([cffda32](https://github.com/tjboudreaux/hermes-wiki/commit/cffda3219d67d512b944ea963c51a86ecc51c022))
+* **skills:** media skill kind and wiki-media-ingestion scaffold ([0139055](https://github.com/tjboudreaux/hermes-wiki/commit/013905554c79c763a2fe9fa074f115ee1c67714e))
+
 ## [0.4.1](https://github.com/tjboudreaux/hermes-wiki/compare/v0.4.0...v0.4.1) (2026-06-07)
 
 
