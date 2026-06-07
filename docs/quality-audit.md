@@ -298,7 +298,7 @@ Any work touching the adapter surface (`adapters/hermes/`) should be verified ag
 |---|---|---|---|
 | ✅ F1 — Skill synthesis/dedup/contradiction protocol (skills v1.1.0, 2026-06-07) | Content | S | — |
 | ✅ Verify skill precedence vs upstream bundled `llm-wiki` skill (2026-06-07 — see Integration cautions; spawned F9) | Content | S | — |
-| F9 — Prompt injection loads assigned wiki skills (`prompt.py`: instruct agents to `skill_view` the SCHEMA.md-assigned `wiki:*` skills before writing) | Content | S | — |
+| ✅ F9 — Prompt injection loads assigned wiki skills (write-guidance line + per-wiki override annotations, 2026-06-07) | Content | S | — |
 | ✅ Eval scaffold (`evals/` harness, markers, runner, structural eval; CI-gated 2026-06-07) | Test/Content | M | — |
 | ✅ F7 — BM25 retrieval baseline (`evals/results/bm25-baseline.jsonl`, 2026-06-07) | Retrieval | S | Eval scaffold |
 | ✅ T1 — Coverage floor 84% in CI (observed 86%, 2026-06-07) | Test | S | — |
